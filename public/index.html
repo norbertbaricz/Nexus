@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Nexus</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cpath fill='%233B82F6' d='M428.1 48.9c-29.2-29.2-76.7-29.2-105.9 0l-57.9 57.9c-3.1-4-6.6-7.8-10.4-11.4c-42-39.7-107.1-43-152.9-10.1C55.2 118.2 0 204.6 0 293.9c0 14.5 11.8 26.3 26.3 26.3h42.1c11.7 0 22.1-7.9 25.3-19.3c5.3-19.3 14.4-37.4 27.2-53.1c14.7-18 33-31.5 53.6-39.7c-2.3 8.1-3.5 16.5-3.5 25.2c0 19 6 36.9 16.4 51.5L96.2 376.1c-9.4 9.4-9.4 24.6 0 33.9s24.6 9.4 33.9 0l92.5-92.5c15.1 10.9 33.7 17.3 53.5 17.3c9.1 0 17.9-1.3 26.3-3.7c-8 20.2-21.2 38.3-38.9 52.8c-15.5 12.6-33.4 21.6-52.5 26.7c-11.2 3-18.9 13.2-18.9 24.8v40.3c0 14.5 11.8 26.3 26.3 26.3c89.3 0 175.7-55.2 208.6-101c32.9-45.8 29.6-110.9-10.1-152.9c-3.6-3.8-7.4-7.3-11.4-10.4l57.9-57.9c29.2-29.2 29.2-76.7 0-105.9z'/%3E%3C/svg%3E">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+        :root { --bg-deep: #0A0E17; --panel-bg: #111827; --panel-border: rgba(255, 255, 255, 0.06); }
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: var(--bg-deep); color: #E2E8F0; -webkit-tap-highlight-color: transparent; margin: 0; padding: 0; overflow: hidden; width: 100vw; height: 100dvh; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        @keyframes slideUpFade { 0% { opacity: 0; transform: translateY(10px); } 100% { opacity: 1; transform: translateY(0); } }
+        .animate-message { animation: slideUpFade 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
+        @keyframes scalePopIn { 0% { opacity: 0; transform: scale(0.95); } 100% { opacity: 1; transform: scale(1); } }
+        .animate-modal { animation: scalePopIn 0.2s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .animate-fade { animation: fadeIn 0.2s ease-out forwards; }
+        .glass-panel { background: var(--panel-bg); border: 1px solid var(--panel-border); }
+        input[type="file"] { display: none; }
+        .msg-row { position: relative; display: flex; width: 100%; margin-bottom: 8px; }
+        .msg-actions { opacity: 0; transform: scale(0.95); transition: all 0.2s ease; pointer-events: none; }
+        .msg-row:hover .msg-actions { opacity: 1; transform: scale(1); pointer-events: auto; }
+        .bubble-me { background: linear-gradient(135deg, #2563EB 0%, #3B82F6 100%); color: #ffffff; border-radius: 18px 18px 4px 18px; box-shadow: 0 2px 8px rgba(37, 99, 235, 0.15); }
+        .bubble-them { background: #1F2937; color: #E2E8F0; border: 1px solid rgba(255,255,255,0.03); border-radius: 18px 18px 18px 4px; }
+        .ring-online { box-shadow: 0 0 0 2px var(--panel-bg), 0 0 0 4px #10B981; }
+        .ring-idle { box-shadow: 0 0 0 2px var(--panel-bg), 0 0 0 4px #F59E0B; }
+        .ring-dnd { box-shadow: 0 0 0 2px var(--panel-bg), 0 0 0 4px #EF4444; }
+        .ring-invisible { box-shadow: 0 0 0 2px var(--panel-bg), 0 0 0 4px #6B7280; }
+        .sidebar-ring-online { box-shadow: 0 0 0 2px #111827, 0 0 0 4px #10B981; }
+        .sidebar-ring-idle { box-shadow: 0 0 0 2px #111827, 0 0 0 4px #F59E0B; }
+        .sidebar-ring-dnd { box-shadow: 0 0 0 2px #111827, 0 0 0 4px #EF4444; }
+        .sidebar-ring-invisible { box-shadow: 0 0 0 2px #111827, 0 0 0 4px #6B7280; }
+        .markdown-bold { font-weight: 700; color: #FFFFFF; }
+        .markdown-italic { font-style: italic; }
+        .markdown-strike { text-decoration: line-through; opacity: 0.7; }
+        .markdown-code { background-color: rgba(0,0,0,0.3); padding: 3px 6px; border-radius: 6px; font-family: monospace; font-size: 0.85em; }
+        .markdown-link { color: #60A5FA; text-decoration: underline; text-underline-offset: 2px; }
+        .bubble-me .markdown-link { color: #BFDBFE; font-weight: 600; }
+        .bubble-me .markdown-code { background-color: rgba(255,255,255,0.15); }
+    </style>
+</head>
+<body class="h-[100dvh] w-full flex selection:bg-blue-500/30 selection:text-white">
+
+    <div id="toast-container" class="fixed top-4 right-4 z-[70] flex flex-col gap-2 pointer-events-none w-72"></div>
+
+    <div id="loading-screen" class="fixed inset-0 z-60 flex flex-col items-center justify-center bg-[#0A0E17] text-white transition-opacity duration-500">
+        <div class="relative mb-6">
+            <div class="w-12 h-12 rounded-full border-t-2 border-r-2 border-blue-500 animate-spin"></div>
+            <div class="absolute inset-0 flex items-center justify-center text-blue-400"><i class="fas fa-network-wired text-sm"></i></div>
+        </div>
+        <h2 class="text-sm font-bold tracking-[0.2em] text-blue-400 uppercase">Nexus Protocol</h2>
+    </div>
+
+    <!-- Setup Modal -->
+    <div id="setup-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fade">
+        <div class="bg-[#111827] border border-white/5 p-8 rounded-3xl w-full max-w-sm mx-auto animate-modal relative shadow-2xl">
+            <button id="btn-close-setup" class="absolute top-5 right-5 text-slate-400 hover:text-white transition-colors hidden w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/5"><i class="fas fa-times text-lg"></i></button>
+            <div class="text-center mb-8">
+                <h2 class="text-2xl font-bold text-white tracking-tight mb-1">Identity</h2>
+            </div>
+            <div class="flex flex-col items-center mb-8">
+                <div class="relative group cursor-pointer mb-5" id="btn-trigger-avatar">
+                    <div class="w-28 h-28 rounded-full p-1 bg-[#1F2937] shadow-inner"><img id="avatar-preview" src="https://api.dicebear.com/9.x/bottts/svg?seed=Nexus" class="w-full h-full rounded-full bg-[#0A0E17] object-cover"></div>
+                    <div class="absolute inset-1 bg-black/60 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"><i class="fas fa-camera text-white text-xl"></i></div>
+                </div>
+                <div class="flex gap-2 w-full justify-center">
+                    <button id="btn-random-avatar" class="bg-[#1F2937] hover:bg-[#374151] border border-white/5 text-slate-300 text-xs px-4 py-2 rounded-full transition-all font-medium"><i class="fas fa-dice"></i> Randomize</button>
+                    <input type="file" id="avatar-upload-input" accept="image/png, image/jpeg, image/webp">
+                </div>
+            </div>
+            <div class="mb-8">
+                <label class="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 ml-1">Display Name</label>
+                <input type="text" id="username-input" placeholder="e.g. Maverick" class="w-full bg-[#0A0E17] border border-white/5 rounded-xl p-3.5 text-white focus:outline-none focus:border-blue-500">
+            </div>
+            <button id="btn-save-profile" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3.5 rounded-xl transition-all shadow-lg">Save Profile</button>
+        </div>
+    </div>
+
+    <!-- Action/Edit/Error Modal -->
+    <div id="action-modal" class="fixed inset-0 z-[55] hidden items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fade">
+        <div class="bg-[#111827] border border-white/5 p-6 rounded-2xl w-full max-w-sm mx-auto animate-modal flex flex-col shadow-2xl">
+            <div class="flex items-center gap-3 mb-4">
+                <div class="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-400"><i class="fas fa-info-circle text-lg"></i></div>
+                <h3 id="action-modal-title" class="text-lg font-bold text-white">Notice</h3>
+            </div>
+            <p id="action-modal-desc" class="text-slate-300 text-[15px] mb-6 leading-relaxed ml-1"></p>
+            <div id="action-modal-input-container" class="hidden mb-6"><textarea id="action-modal-input" class="w-full bg-[#0A0E17] border border-white/5 rounded-xl p-3 text-white h-24 custom-scrollbar"></textarea></div>
+            <div class="flex justify-end gap-3 w-full" id="action-modal-buttons">
+                <button id="btn-action-cancel" class="px-5 py-2.5 rounded-xl hover:bg-white/5 text-slate-300 font-medium text-sm">Cancel</button>
+                <button id="btn-action-confirm" class="px-6 py-2.5 rounded-xl bg-white text-black hover:bg-slate-200 font-bold text-sm shadow-lg">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Incoming Call Modal -->
+    <div id="incoming-call-modal" class="fixed inset-0 z-[75] hidden items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-fade">
+        <div class="bg-[#111827] border border-white/10 p-8 rounded-3xl w-full max-w-sm mx-auto flex flex-col items-center shadow-[0_0_50px_rgba(59,130,246,0.2)]">
+            <div class="relative mb-6">
+                <img id="incoming-caller-avatar" src="" class="w-24 h-24 rounded-full object-cover shadow-xl border-4 border-[#1F2937]">
+                <div class="absolute -bottom-2 -right-2 w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center border-4 border-[#111827] animate-pulse">
+                    <i id="incoming-call-icon" class="fas fa-video text-white text-sm"></i>
+                </div>
+            </div>
+            <h3 id="incoming-caller-name" class="text-2xl font-bold text-white mb-1">...</h3>
+            <p class="text-blue-400 text-sm font-medium tracking-wide mb-8">Incoming Call...</p>
+            <div class="flex gap-6 w-full justify-center">
+                <button id="btn-reject-call" class="w-14 h-14 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center text-xl shadow-lg transition-transform hover:scale-105"><i class="fas fa-phone-slash"></i></button>
+                <button id="btn-accept-call" class="w-14 h-14 rounded-full bg-green-500 hover:bg-green-600 text-white flex items-center justify-center text-xl shadow-lg transition-transform hover:scale-105 animate-bounce"><i class="fas fa-phone"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Active Call Modal -->
+    <div id="active-call-modal" class="fixed inset-0 z-[70] hidden bg-black flex-col animate-fade h-[100dvh] w-screen overflow-hidden">
+        <div class="relative w-full h-full flex items-center justify-center overflow-hidden">
+            <video id="remote-video" class="w-full h-full object-contain bg-black" autoplay playsinline></video>
+            <video id="local-video" class="absolute bottom-24 right-4 w-28 h-40 md:right-6 md:w-48 md:h-64 bg-slate-900 rounded-2xl object-cover border-2 border-white/10 shadow-2xl z-10" autoplay playsinline muted></video>
+            
+            <div class="absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-4 bg-black/60 backdrop-blur-md px-6 py-4 rounded-full border border-white/10 z-20">
+                <button id="btn-toggle-audio" class="w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"><i class="fas fa-microphone"></i></button>
+                <button id="btn-toggle-video" class="w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"><i class="fas fa-video"></i></button>
+                <button id="btn-end-call" class="w-14 h-14 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center text-xl ml-2 shadow-lg"><i class="fas fa-phone-slash"></i></button>
+            </div>
+            <div class="absolute top-6 left-6 bg-black/50 backdrop-blur-md px-4 py-2 rounded-xl text-white font-medium text-sm border border-white/5 flex items-center gap-2">
+                <div class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div>
+                <span id="active-call-status">Connecting...</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Layout -->
+    <div id="app-container" class="flex w-full h-full opacity-0 transition-opacity duration-500 relative bg-[#0A0E17]">
+        <div id="sidebar-overlay" class="md:hidden fixed inset-0 bg-black/80 z-20 hidden transition-opacity"></div>
+        <div id="sidebar" class="absolute md:relative z-30 w-[320px] h-full flex flex-col transition-transform duration-300 -translate-x-full md:translate-x-0 glass-panel border-y-0 border-l-0 border-r border-white/5">
+            <div class="px-5 pt-6 pb-4 shrink-0 flex flex-col gap-4">
+                <div class="flex items-center justify-between">
+                    <h1 class="text-xl font-bold tracking-wide text-white flex items-center gap-2"><i class="fas fa-feather-alt text-blue-500 text-sm"></i> Nexus</h1>
+                    <button id="btn-close-sidebar" class="md:hidden w-8 h-8 flex items-center justify-center text-slate-400 hover:text-white rounded-full bg-white/5"><i class="fas fa-arrow-left"></i></button>
+                </div>
+                <div class="relative w-full">
+                    <input type="text" id="search-users" placeholder="Search friends..." class="w-full bg-[#0A0E17] border border-white/5 rounded-full text-[13px] pl-10 pr-4 py-2 text-white focus:outline-none placeholder-slate-500">
+                    <i class="fas fa-search absolute left-4 top-2.5 text-slate-500 text-xs"></i>
+                </div>
+            </div>
+            <div class="flex-1 overflow-y-auto px-3 pb-2 custom-scrollbar space-y-0.5" id="contacts-list"></div>
+            
+            <div class="p-3 shrink-0 relative bg-[#0A0E17]/50 border-t border-white/5">
+                <div id="status-menu" class="hidden absolute bottom-[75px] left-3 w-[220px] bg-[#111827] rounded-xl shadow-xl p-1.5 z-50 border border-white/5">
+                    <div class="text-[10px] font-bold text-slate-400 uppercase px-3 pt-2 pb-1.5 tracking-wider">Set Status</div>
+                    <button class="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/5 rounded-lg text-sm text-slate-200" data-status="online"><span class="w-2.5 h-2.5 bg-[#10B981] rounded-full"></span> Online</button>
+                    <button class="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/5 rounded-lg text-sm text-slate-200" data-status="idle"><span class="w-2.5 h-2.5 bg-[#F59E0B] rounded-full"></span> Idle</button>
+                    <button class="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/5 rounded-lg text-sm text-slate-200" data-status="dnd"><span class="w-2.5 h-2.5 bg-[#EF4444] rounded-full"></span> Do Not Disturb</button>
+                    <button class="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/5 rounded-lg text-sm text-slate-200" data-status="invisible"><span class="w-2.5 h-2.5 bg-[#6B7280] rounded-full"></span> Offline</button>
+                </div>
+                <div class="flex items-center justify-between bg-[#1F2937]/50 rounded-xl p-1.5 hover:bg-[#1F2937] transition-colors border border-transparent hover:border-white/5">
+                    <div id="btn-profile-status" class="flex items-center gap-3 p-1.5 rounded-lg cursor-pointer flex-1 min-w-0 group">
+                        <div class="relative shrink-0 p-0.5"><img id="my-avatar" src="" class="w-9 h-9 rounded-full bg-[#0A0E17] object-cover transition-all"></div>
+                        <div class="flex flex-col min-w-0 justify-center">
+                            <span id="my-username" class="font-bold text-[14px] text-white truncate leading-tight">...</span>
+                            <span id="my-status-text" class="text-[11px] text-slate-400 truncate mt-0.5 font-medium">Online</span>
+                        </div>
+                    </div>
+                    <button id="btn-settings" class="w-9 h-9 flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 rounded-lg"><i class="fas fa-cog text-[14px]"></i></button>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex-1 flex flex-col h-full relative min-w-0 bg-[#0A0E17]">
+            <div class="h-16 px-4 md:px-6 border-b border-white/5 flex items-center justify-between shrink-0 z-10 bg-[#111827]/80 backdrop-blur-md">
+                <div class="flex items-center gap-3 min-w-0 h-full">
+                    <button id="btn-open-sidebar" class="md:hidden w-10 h-10 -ml-2 flex items-center justify-center text-slate-400 hover:text-white rounded-full hover:bg-white/5"><i class="fas fa-bars"></i></button>
+                    <div class="flex items-center gap-3">
+                        <div id="chat-header-avatar-container" class="relative hidden"><img id="chat-header-avatar" src="" class="w-9 h-9 rounded-full object-cover shadow-sm"></div>
+                        <div id="chat-header-icon" class="w-9 h-9 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-500 border border-blue-500/20"><i class="fas fa-globe-americas"></i></div>
+                        <div class="flex flex-col">
+                            <h2 id="chat-header-title" class="font-bold text-[15px] text-white truncate">Nexus Global</h2>
+                            <span id="chat-header-subtitle" class="text-[11px] text-slate-400 font-medium tracking-wide">Public Network</span>
+                        </div>
+                    </div>
+                </div>
+                <div id="chat-header-actions" class="flex items-center gap-1 text-slate-400 shrink-0 h-full hidden">
+                    <button id="btn-call-voice" class="w-9 h-9 flex items-center justify-center hover:text-blue-400 transition-all rounded-full hover:bg-white/10"><i class="fas fa-phone-alt text-[14px]"></i></button>
+                    <button id="btn-call-video" class="w-9 h-9 flex items-center justify-center hover:text-blue-400 transition-all rounded-full hover:bg-white/10"><i class="fas fa-video text-[14px]"></i></button>
+                </div>
+            </div>
+
+            <!-- Adăugăm un container wrapper pentru scroll -->
+            <div class="relative flex-1 flex flex-col min-h-0">
+                <div id="messages-container" class="absolute inset-0 overflow-y-auto px-4 md:px-6 py-6 space-y-4 custom-scrollbar scroll-smooth flex flex-col"></div>
+                
+                <!-- Buton de Scroll Plutitor (apare doar cand citesti in sus) -->
+                <button id="btn-scroll-bottom" class="hidden absolute bottom-4 right-4 md:right-8 z-40 w-10 h-10 bg-[#1F2937] hover:bg-blue-600 border border-white/10 text-white rounded-full shadow-2xl items-center justify-center transition-all transform hover:scale-105">
+                    <i class="fas fa-chevron-down text-sm"></i>
+                </button>
+            </div>
+
+            <div class="px-4 pb-4 md:px-6 md:pb-6 shrink-0 relative bg-gradient-to-t from-[#0A0E17] via-[#0A0E17] to-transparent pt-2 z-20">
+                <form id="message-form" class="bg-[#111827] border border-white/5 rounded-[20px] flex items-end w-full relative transition-all focus-within:border-white/10 focus-within:shadow-[0_4px_20px_rgba(0,0,0,0.3)] shadow-md">
+                    
+                    <div class="relative">
+                        <button type="button" id="btn-upload-menu" class="w-12 h-12 shrink-0 flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/5 rounded-bl-[20px] rounded-tl-[20px] transition-all outline-none">
+                            <i class="fas fa-plus-circle text-[18px]"></i>
+                        </button>
+                        
+                        <div id="upload-dropdown" class="hidden absolute bottom-[55px] left-0 bg-[#1F2937] border border-white/10 rounded-xl shadow-xl flex-col p-1.5 w-40 z-50">
+                            <button type="button" class="upload-option w-full flex items-center gap-3 px-3 py-2 text-sm text-slate-300 hover:bg-white/5 hover:text-white rounded-lg transition-colors" data-accept="image/*"><i class="fas fa-image text-blue-400"></i> Photo</button>
+                            <button type="button" class="upload-option w-full flex items-center gap-3 px-3 py-2 text-sm text-slate-300 hover:bg-white/5 hover:text-white rounded-lg transition-colors" data-accept="video/*"><i class="fas fa-video text-purple-400"></i> Video</button>
+                            <button type="button" class="upload-option w-full flex items-center gap-3 px-3 py-2 text-sm text-slate-300 hover:bg-white/5 hover:text-white rounded-lg transition-colors" data-accept="*"><i class="fas fa-file-alt text-emerald-400"></i> Document</button>
+                        </div>
+                    </div>
+                    
+                    <input type="file" id="chat-file-upload" class="hidden" multiple>
+                    
+                    <textarea id="message-input" rows="1" class="flex-1 bg-transparent text-white text-[15px] resize-none max-h-[40vh] custom-scrollbar focus:outline-none placeholder-slate-500 py-3.5 leading-snug" placeholder="Message..."></textarea>
+                    <button type="submit" id="btn-send" class="w-12 h-12 shrink-0 flex items-center justify-center text-slate-400 hover:text-blue-400 hover:bg-white/5 rounded-r-[20px] transition-all disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed outline-none"><i class="fas fa-paper-plane text-[16px]"></i></button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    const socket = io();
+
+    let localUid = localStorage.getItem('nexus_uid');
+    let localStatus = localStorage.getItem('nexus_status') || 'online';
+    // SISTEM NOU: Bazat pe ID-ul mesajului (rezolvă dispariția la reload)
+    let readCursors = JSON.parse(localStorage.getItem('nexus_read_cursors')) || {};
+
+    function markChatAsRead(chatId) {
+        const msgs = allMessages.filter(m => 
+            chatId === 'global' ? m.receiverId === 'global' : (m.senderId === chatId || m.receiverId === chatId)
+        );
+        if (msgs.length > 0) {
+            readCursors[chatId] = Math.max(...msgs.map(m => m.id));
+        } else {
+            readCursors[chatId] = 0;
+        }
+        localStorage.setItem('nexus_read_cursors', JSON.stringify(readCursors));
+    }
+
+    if (!localUid) { 
+        localUid = 'user_' + Math.random().toString(36).substr(2, 9); 
+        localStorage.setItem('nexus_uid', localUid); 
+    }
+    const currentUser = { uid: localUid };
+
+    socket.on('connect', () => { 
+        if (currentUser && currentUser.uid) {
+            socket.emit('identify', { uid: currentUser.uid, status: localStatus }); 
+        }
+    });
+
+    let userData = null, allUsers = [], allMessages = [];
+    let activeChatId = 'global', isFirstLoad = true, searchQuery = '', unreadCounts = {}; 
+    let currentAvatarUrl = 'https://api.dicebear.com/9.x/bottts/svg?seed=Nexus', originalAvatarUrl = '', originalUsername = '';
+    
+    let usersLoaded = false, msgsLoaded = false;
+    
+    const statusConfig = {
+        online: { class: 'ring-online', sidebarClass: 'sidebar-ring-online', text: 'Online' },
+        idle: { class: 'ring-idle', sidebarClass: 'sidebar-ring-idle', text: 'Idle' },
+        dnd: { class: 'ring-dnd', sidebarClass: 'sidebar-ring-dnd', text: 'Do Not Disturb' },
+        invisible: { class: 'ring-invisible', sidebarClass: 'sidebar-ring-invisible', text: 'Offline' }, 
+        offline: { class: 'ring-invisible', sidebarClass: 'sidebar-ring-invisible', text: 'Offline' }
+    };
+
+    // ==========================================
+    // AUDIO UNLOCKER & FIX (SILENȚIOS, SOFT & CALM)
+    // ==========================================
+    const soundSend = new Audio('https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3'); 
+    const soundReceiveOpen = new Audio('https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3'); 
+    const soundReceiveDM = new Audio('https://assets.mixkit.co/active_storage/sfx/2870/2870-preview.mp3'); // Sunet nou, foarte soft pentru DM
+    const soundRing = new Audio('https://assets.mixkit.co/active_storage/sfx/2864/2864-preview.mp3'); // Sonerie modernă, chill
+    const soundCalling = new Audio('https://assets.mixkit.co/active_storage/sfx/2560/2560-preview.mp3'); 
+
+    // SETĂM VOLUMELE MICI (calm & chill)
+    soundSend.volume = 0.15;
+    soundReceiveOpen.volume = 0.15;
+    soundReceiveDM.volume = 0.3;
+    soundRing.volume = 0.3;
+    soundCalling.volume = 0.2;
+
+    soundRing.loop = true;
+    soundCalling.loop = true;
+
+    let soundsUnlocked = false;
+    // Deblocare silențioasă (fără sunete ciudate de click)
+    document.addEventListener('click', () => {
+        if (!soundsUnlocked) {
+            [soundSend, soundReceiveOpen, soundReceiveDM, soundRing, soundCalling].forEach(audio => {
+                audio.muted = true; // Îl dăm pe mut
+                audio.play().then(() => {
+                    audio.pause();
+                    audio.currentTime = 0;
+                    audio.muted = false; // Îi scoatem mutul pentru a fi gata de folosire
+                }).catch(()=>{});
+            });
+            soundsUnlocked = true;
+        }
+    }, { once: true });
+
+    function playAudioSecurely(audioElement) {
+        if (!soundsUnlocked) return; 
+        audioElement.currentTime = 0;
+        audioElement.play().catch(e => console.log('Audio autoplay policy blocked'));
+    }
+
+    let localStream, peerConnection, incomingCallData = null, isCalling = false;
+    const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+    function checkInitialization() {
+        if(usersLoaded && msgsLoaded) {
+            userData = allUsers.find(u => u.id === currentUser.uid);
+            if (!userData && isFirstLoad) {
+                document.getElementById('loading-screen').classList.add('opacity-0');
+                setTimeout(() => { document.getElementById('loading-screen').classList.add('hidden'); document.getElementById('setup-modal').classList.replace('hidden', 'flex'); }, 500);
+            } else if (userData) { 
+                initAppUI(); updateUnreadCounts(); renderSidebar(); renderMessages();
+            }
+        }
+    }
+
+    socket.on('init_users', (users) => { allUsers = users; usersLoaded = true; checkInitialization(); });
+    socket.on('init_messages', (msgs) => { allMessages = msgs; msgsLoaded = true; checkInitialization(); });
+
+    socket.on('user_updated', (user) => {
+        const idx = allUsers.findIndex(u => u.id === user.id);
+        if(idx > -1) allUsers[idx] = user; else allUsers.push(user);
+        if (user.id === currentUser.uid) { userData = user; initAppUI(); }
+        renderSidebar(); renderMessages();
+    });
+
+    socket.on('profile_error', (msg) => { 
+        showActionModal({ title: 'Profile Error', desc: msg, confirmText: 'Try Again', confirmStyle: 'bg-red-500 text-white hover:bg-red-600', onConfirm: () => document.getElementById('action-modal').classList.replace('flex', 'hidden') });
+        document.getElementById('setup-modal').classList.replace('hidden', 'flex'); 
+    });
+
+    socket.on('new_message', (msg) => {
+        allMessages.push(msg);
+        if (userData) {
+            const isGlobalMessage = msg.receiverId === 'global';
+            const isCurrentlyOpenChat = (isGlobalMessage && activeChatId === 'global') ||
+                                        (!isGlobalMessage && activeChatId === msg.senderId) ||
+                                        (msg.senderId === currentUser.uid);
+
+            if (isCurrentlyOpenChat) {
+                readCursors[activeChatId] = msg.id;
+                localStorage.setItem('nexus_read_cursors', JSON.stringify(readCursors));
+            }
+            
+            updateUnreadCounts(); renderSidebar(); renderMessages();
+            
+            if (msg.senderId === currentUser.uid) {
+                playAudioSecurely(soundSend);
+            } else if (userData.status !== 'dnd') { 
+                if (isCurrentlyOpenChat) {
+                    playAudioSecurely(soundReceiveOpen);
+                } else if (!isGlobalMessage) {
+                    playAudioSecurely(soundReceiveDM); // Acest sunet se va auzi mult mai chill
+                }
+            }
+        }
+    });
+
+    socket.on('message_edited', (data) => { const msg = allMessages.find(m => m.id === data.id); if(msg) { msg.text = data.text; msg.isEdited = true; renderMessages(); }});
+    socket.on('message_deleted', (id) => { allMessages = allMessages.filter(m => m.id !== id); renderMessages(); });
+
+    function formatMarkdown(text) {
+        if (!text) return '';
+        const div = document.createElement('div'); div.innerText = text; let h = div.innerHTML;
+        h = h.replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" class="markdown-link">$1</a>');
+        h = h.replace(/\*\*(.*?)\*\*/g, '<span class="markdown-bold">$1</span>');
+        h = h.replace(/\*(.*?)\*/g, '<span class="markdown-italic">$1</span>');
+        h = h.replace(/~~(.*?)~~/g, '<span class="markdown-strike">$1</span>');
+        h = h.replace(/`([^`]+)`/g, '<code class="markdown-code">\$1</code>');
+        return h;
+    }
+
+    function showActionModal({ title, desc, confirmText, confirmStyle = 'bg-white text-black hover:bg-slate-200', onConfirm, showInput = false, inputValue = '' }) {
+        const modal = document.getElementById('action-modal');
+        document.getElementById('action-modal-title').textContent = title;
+        document.getElementById('action-modal-desc').textContent = desc;
+        
+        const inputContainer = document.getElementById('action-modal-input-container');
+        const inputEl = document.getElementById('action-modal-input');
+        
+        if (showInput) { inputContainer.classList.remove('hidden'); inputEl.value = inputValue; } 
+        else { inputContainer.classList.add('hidden'); }
+        
+        const btnConfirm = document.getElementById('btn-action-confirm');
+        
+        if (onConfirm) {
+            btnConfirm.textContent = confirmText;
+            btnConfirm.className = `px-6 py-2.5 rounded-xl transition-all font-bold text-sm shadow-lg ${confirmStyle}`;
+            btnConfirm.classList.remove('hidden');
+            
+            btnConfirm.replaceWith(btnConfirm.cloneNode(true));
+            const newBtnConfirm = document.getElementById('btn-action-confirm');
+            
+            newBtnConfirm.onclick = async () => {
+                const val = inputEl.value; newBtnConfirm.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; newBtnConfirm.disabled = true;
+                try { await onConfirm(val); modal.classList.replace('flex', 'hidden'); } 
+                finally { newBtnConfirm.disabled = false; newBtnConfirm.textContent = confirmText; }
+            };
+        } else { btnConfirm.classList.add('hidden'); }
+        
+        modal.classList.replace('hidden', 'flex');
+        if (showInput) setTimeout(() => inputEl.focus(), 100);
+    }
+
+    document.getElementById('btn-action-cancel').addEventListener('click', () => document.getElementById('action-modal').classList.replace('flex', 'hidden'));
+
+    window.promptDeleteMessage = (msgId) => {
+        showActionModal({
+            title: "Delete Message", desc: "Are you sure you want to permanently delete this message?",
+            confirmText: "Delete", confirmStyle: "bg-red-500 text-white hover:bg-red-600",
+            onConfirm: () => socket.emit('delete_message', msgId)
+        });
+    };
+
+    window.promptEditMessage = (msgId) => {
+        const msg = allMessages.find(m => m.id === msgId);
+        if(!msg) return;
+        showActionModal({
+            title: "Edit Message", desc: "Update your text below:",
+            confirmText: "Save", confirmStyle: "bg-blue-500 text-white hover:bg-blue-600",
+            showInput: true, inputValue: msg.text,
+            onConfirm: (newText) => {
+                if(newText.trim() !== '') socket.emit('edit_message', { id: msgId, text: newText.trim() });
+            }
+        });
+    };
+
+    function toggleSidebar(show) {
+        const sb = document.getElementById('sidebar'); const overlay = document.getElementById('sidebar-overlay');
+        if (show) {
+            sb.classList.remove('-translate-x-full'); overlay.classList.remove('hidden');
+            setTimeout(() => overlay.classList.remove('opacity-0'), 10);
+        } else {
+            sb.classList.add('-translate-x-full'); overlay.classList.add('opacity-0');
+            setTimeout(() => overlay.classList.add('hidden'), 300);
+        }
+    }
+    document.getElementById('btn-open-sidebar').addEventListener('click', () => toggleSidebar(true));
+    document.getElementById('btn-close-sidebar').addEventListener('click', () => toggleSidebar(false));
+    document.getElementById('sidebar-overlay').addEventListener('click', () => toggleSidebar(false));
+
+    function initAppUI() {
+        if(!userData) return;
+        document.getElementById('my-avatar').src = userData.avatarUrl;
+        document.getElementById('my-avatar').className = `w-9 h-9 rounded-full bg-[#0A0E17] object-cover transition-all ${statusConfig[userData.status || 'online'].class}`;
+        document.getElementById('my-username').textContent = userData.username;
+        document.getElementById('my-status-text').textContent = statusConfig[userData.status || 'online'].text;
+        document.getElementById('loading-screen').classList.add('hidden');
+        document.getElementById('app-container').classList.remove('hidden', 'opacity-0');
+        if (isFirstLoad) { isFirstLoad = false; switchChat('global', 'Global Network'); }
+    }
+
+    function updateUnreadCounts() {
+        const newUnread = {};
+        allMessages.forEach(m => {
+            if (m.senderId !== currentUser.uid) {
+                let cId = m.receiverId === 'global' ? 'global' : m.senderId;
+                
+                if (cId === activeChatId) {
+                    // Dacă suntem pe chat-ul ăsta, actualizăm ID-ul maxim citit
+                    readCursors[cId] = Math.max(readCursors[cId] || 0, m.id);
+                    localStorage.setItem('nexus_read_cursors', JSON.stringify(readCursors));
+                } else {
+                    // Dacă ID-ul mesajului este mai mare decât ce am citit, adaugă la unread
+                    if (m.id > (readCursors[cId] || 0)) {
+                        newUnread[cId] = (newUnread[cId] || 0) + 1;
+                    }
+                }
+            }
+        });
+        unreadCounts = newUnread;
+    }
+
+    function switchChat(chatId, chatName) {
+        activeChatId = chatId; 
+        
+        markChatAsRead(chatId); // Folosim noul sistem aici
+        unreadCounts[chatId] = 0;
+
+        document.getElementById('chat-header-title').textContent = chatId === 'global' ? 'Nexus Global' : chatName;
+        const ac = document.getElementById('chat-header-actions');
+        
+        if (chatId === 'global') {
+            document.getElementById('chat-header-icon').classList.remove('hidden'); document.getElementById('chat-header-avatar-container').classList.add('hidden');
+            document.getElementById('chat-header-subtitle').textContent = "Public Network";
+            document.getElementById('message-input').placeholder = `Message Global...`;
+            ac.classList.add('hidden');
+        } else {
+            document.getElementById('chat-header-icon').classList.add('hidden'); document.getElementById('chat-header-avatar-container').classList.remove('hidden');
+            const u = allUsers.find(x => x.id === chatId);
+            if (u) {
+                const av = document.getElementById('chat-header-avatar'); av.src = u.avatarUrl;
+                av.className = `w-9 h-9 rounded-full object-cover shadow-sm transition-all ${statusConfig[u.status || 'online'].sidebarClass}`;
+                document.getElementById('chat-header-subtitle').textContent = statusConfig[u.status || 'online'].text;
+            }
+            document.getElementById('message-input').placeholder = `Message @${chatName}...`;
+            ac.classList.remove('hidden');
+        }
+        
+        updateUnreadCounts(); 
+        renderSidebar(); 
+        renderMessages();
+        scrollToBottom(true); // Forteaza scroll-ul jos cand schimbi chatul
+        if (window.innerWidth < 768) document.getElementById('sidebar-overlay').click();
+    }
+
+    function renderSidebar() {
+        if (!userData) return;
+        const list = document.getElementById('contacts-list'); list.innerHTML = '';
+        const isGlobal = activeChatId === 'global';
+        const globalBadge = unreadCounts['global'] ? `<div class="bg-blue-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full ml-auto shadow-sm">${unreadCounts['global']}</div>` : '';
+        const gb = document.createElement('div');
+        gb.className = `p-2 rounded-xl flex items-center gap-3 cursor-pointer transition-all border ${isGlobal ? 'bg-[#1F2937] border-white/5' : 'border-transparent hover:bg-white/5'}`;
+        gb.innerHTML = `<div class="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0 border border-blue-500/20"><i class="fas fa-globe-americas text-blue-500 text-sm"></i></div><div class="flex-1 min-w-0"><div class="font-bold text-[14px] ${isGlobal ? 'text-white' : 'text-slate-300'} truncate">Nexus Global</div><div class="text-[11px] text-slate-500 truncate">Public hub</div></div>${globalBadge}`;
+        gb.onclick = () => switchChat('global', 'Global Network'); list.appendChild(gb);
+
+        const d = document.createElement('div'); d.className = 'px-3 pt-5 pb-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest'; d.innerHTML = `<span>Direct Messages</span>`; list.appendChild(d);
+
+        allUsers.filter(u => u.id !== currentUser.uid && (!searchQuery || u.username.toLowerCase().includes(searchQuery))).forEach(u => {
+            const isActive = activeChatId === u.id;
+            const badge = unreadCounts[u.id] ? `<div class="bg-blue-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full ml-auto shadow-sm">${unreadCounts[u.id]}</div>` : '';
+            const btn = document.createElement('div');
+            btn.className = `p-2 rounded-xl flex items-center gap-3 cursor-pointer transition-all border ${isActive ? 'bg-[#1F2937] border-white/5' : 'border-transparent hover:bg-white/5'}`;
+            btn.innerHTML = `<div class="relative shrink-0 p-0.5"><img src="${u.avatarUrl}" class="w-9 h-9 rounded-full object-cover bg-black/50 ${statusConfig[u.status || 'online'].sidebarClass}"></div><div class="flex-1 min-w-0"><div class="font-bold text-[14px] ${isActive ? 'text-white' : 'text-slate-300'} truncate">${u.username}</div><div class="text-[11px] text-slate-500 truncate">${statusConfig[u.status || 'online'].text}</div></div>${badge}`;
+            btn.onclick = () => switchChat(u.id, u.username); list.appendChild(btn);
+        });
+    }
+
+    // ==========================================
+    // LOGICĂ SCROLL
+    // ==========================================
+    const containerMessages = document.getElementById('messages-container');
+    const btnScrollBottom = document.getElementById('btn-scroll-bottom');
+    let userIsScrollingUp = false;
+
+    containerMessages.addEventListener('scroll', () => {
+        const isAtBottom = containerMessages.scrollHeight - containerMessages.scrollTop - containerMessages.clientHeight < 150;
+        if (!isAtBottom) {
+            userIsScrollingUp = true;
+            btnScrollBottom.classList.remove('hidden');
+            btnScrollBottom.classList.add('flex');
+        } else {
+            userIsScrollingUp = false;
+            btnScrollBottom.classList.add('hidden');
+            btnScrollBottom.classList.remove('flex');
+        }
+    });
+
+    btnScrollBottom.addEventListener('click', () => {
+        window.scrollToBottom(true);
+    });
+
+    window.scrollToBottom = function(force = false) {
+        if (!userIsScrollingUp || force) {
+            // Scroll rapid
+            setTimeout(() => { containerMessages.scrollTo({ top: containerMessages.scrollHeight, behavior: 'smooth' }); }, 50);
+            // Scroll extra pentru siguranta in caz ca o imagine incarca incet
+            setTimeout(() => { containerMessages.scrollTo({ top: containerMessages.scrollHeight, behavior: 'smooth' }); }, 300);
+        }
+    }
+
+    const renderedMessageIds = new Set();
+    function renderMessages() {
+        if (!userData) return;
+        const filtered = allMessages.filter(m => activeChatId === 'global' ? m.receiverId === 'global' : (m.senderId === currentUser.uid && m.receiverId === activeChatId) || (m.senderId === activeChatId && m.receiverId === currentUser.uid));
+
+        if (filtered.length === 0) { containerMessages.innerHTML = `<div class="flex flex-col items-center justify-center h-full text-slate-500"><div class="w-16 h-16 bg-[#1F2937] rounded-full flex items-center justify-center mb-4"><i class="fas fa-satellite-dish text-2xl text-blue-400"></i></div><p class="font-bold text-slate-300">It's quiet here...</p></div>`; renderedMessageIds.clear(); return; }
+
+        containerMessages.innerHTML = '';
+        let lastSenderId = null, lastTimeMs = 0, lastDate = null;
+
+        filtered.forEach(msg => {
+            const isMe = msg.senderId === currentUser.uid;
+            const senderData = allUsers.find(u => u.id === msg.senderId) || { username: 'Unknown User', avatarUrl: 'https://api.dicebear.com/9.x/bottts/svg?seed=U' };
+            let timeString = '', timeMs = msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now();
+            
+            const date = new Date(timeMs); timeString = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+            if(lastDate !== dateStr) { containerMessages.innerHTML += `<div class="flex justify-center my-5 w-full"><div class="bg-[#1F2937] border border-white/5 rounded-full px-3 py-1 text-[10px] font-bold text-slate-400 tracking-wider uppercase">${dateStr}</div></div>`; lastDate = dateStr; lastSenderId = null; }
+
+            const showAvatar = lastSenderId !== msg.senderId || (timeMs - lastTimeMs > 5 * 60 * 1000);
+            const wrapper = document.createElement('div'); wrapper.className = `msg-row flex ${isMe ? 'justify-end' : 'justify-start'} ${showAvatar ? 'mt-4' : 'mt-1'}`;
+            if (!renderedMessageIds.has(msg.id)) { wrapper.classList.add('animate-message'); renderedMessageIds.add(msg.id); }
+
+            let attachmentHTML = '';
+            if (msg.fileUrl) {
+                // Adăugăm onload="window.scrollToBottom()" ca să dea scroll jos exact când se încarcă poza
+                if (msg.fileType && msg.fileType.startsWith('image/')) attachmentHTML = `<img src="${msg.fileUrl}" onload="window.scrollToBottom()" class="max-w-full rounded-xl mt-1 cursor-pointer shadow-lg border border-white/10" style="max-height:250px;" onclick="window.open('${msg.fileUrl}','_blank')">`;
+                else if (msg.fileType && msg.fileType.startsWith('video/')) attachmentHTML = `<video src="${msg.fileUrl}" onloadstart="window.scrollToBottom()" controls class="max-w-full rounded-xl mt-1 shadow-lg border border-white/10" style="max-height:250px;"></video>`;
+                else attachmentHTML = `<a href="${msg.fileUrl}" target="_blank" class="flex items-center gap-2 bg-black/30 p-2 rounded-lg mt-1 hover:bg-black/50 border border-white/10 text-sm text-blue-400"><i class="fas fa-file"></i> ${msg.fileName || 'Download File'}</a>`;
+            }
+
+            const parsedText = formatMarkdown(msg.text);
+            const textHTML = parsedText ? `<div class="mb-0.5">${parsedText}</div>` : '';
+            const editedBadge = msg.isEdited ? `<span class="text-[10px] opacity-70 ml-1 italic">(edited)</span>` : '';
+
+            if (isMe) {
+                wrapper.innerHTML = `
+                    <div class="msg-actions flex items-center gap-1 mx-2">
+                        <button onclick="promptEditMessage(${msg.id})" class="w-8 h-8 rounded-full hover:bg-white/5 text-slate-400 hover:text-white transition-all flex items-center justify-center"><i class="fas fa-pencil-alt text-[11px]"></i></button>
+                        <button onclick="promptDeleteMessage(${msg.id})" class="w-8 h-8 rounded-full hover:bg-red-500/10 text-slate-400 hover:text-red-400 transition-all flex items-center justify-center"><i class="fas fa-trash text-[11px]"></i></button>
+                    </div>
+                    <div class="flex flex-col items-end max-w-[75%] min-w-0"><div class="bubble-me px-4 py-2 text-[14.5px] leading-relaxed break-words text-left w-auto">${textHTML}${attachmentHTML}${editedBadge}</div></div>`;
+            } else {
+                let avH = showAvatar ? `<div class="p-0.5"><img src="${senderData.avatarUrl}" class="w-8 h-8 rounded-full object-cover bg-black/50 ${statusConfig[senderData.status || 'online'].sidebarClass}"></div>` : '';
+                let nmH = showAvatar ? `<div class="flex items-baseline gap-2 mb-1 ml-1"><span class="text-[13px] font-bold text-slate-300">${senderData.username}</span><span class="text-[10px] text-slate-500">${timeString}</span></div>` : '';
+                wrapper.innerHTML = `<div class="w-9 shrink-0 mr-3 flex flex-col justify-end">${avH}</div><div class="flex flex-col items-start max-w-[75%] min-w-0">${nmH}<div class="bubble-them px-4 py-2 text-[14.5px] leading-relaxed break-words inline-block">${textHTML}${attachmentHTML}${editedBadge}</div></div><span class="text-[10px] text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity mx-2 self-end mb-1.5">${timeString}</span>`;
+            }
+            containerMessages.appendChild(wrapper); lastSenderId = msg.senderId; lastTimeMs = timeMs;
+        });
+        
+        window.scrollToBottom(); // Executăm logica inteligentă de auto-scroll
+    }
+
+    const inputEl = document.getElementById('message-input'), btnSend = document.getElementById('btn-send');
+    const btnUploadMenu = document.getElementById('btn-upload-menu'), uploadDropdown = document.getElementById('upload-dropdown');
+    const chatFileUpload = document.getElementById('chat-file-upload');
+
+    inputEl.addEventListener('input', function() {
+        this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, window.innerHeight * 0.4) + 'px';
+        btnSend.disabled = this.value.trim().length === 0;
+        if(this.value.trim().length > 0) btnSend.classList.add('text-blue-500'); else btnSend.classList.remove('text-blue-500');
+    });
+
+    inputEl.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (this.value.trim().length > 0) document.getElementById('message-form').dispatchEvent(new Event('submit')); }
+    });
+
+    document.getElementById('message-form').addEventListener('submit', (e) => {
+        e.preventDefault(); const text = inputEl.value.trim(); if (!text || !userData) return;
+        inputEl.value = ''; inputEl.style.height = 'auto'; btnSend.disabled = true; btnSend.classList.remove('text-blue-500'); inputEl.focus();
+        socket.emit('send_message', { text: text, senderId: currentUser.uid, receiverId: activeChatId });
+        window.scrollToBottom(true); // Forțăm scroll-ul jos când noi trimitem mesaj
+    });
+
+    btnUploadMenu.addEventListener('click', (e) => { e.stopPropagation(); uploadDropdown.classList.toggle('hidden'); });
+    document.addEventListener('click', (e) => { if(!uploadDropdown.contains(e.target)) uploadDropdown.classList.add('hidden'); });
+
+    document.querySelectorAll('.upload-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+            chatFileUpload.setAttribute('accept', btn.dataset.accept);
+            uploadDropdown.classList.add('hidden');
+            chatFileUpload.click();
+        });
+    });
+
+    chatFileUpload.addEventListener('change', async (e) => {
+        const files = e.target.files; if (!files.length) return;
+        
+        const formData = new FormData(); 
+        for(let i=0; i<files.length; i++) formData.append('files', files[i]);
+        
+        const oldIcon = btnUploadMenu.innerHTML; btnUploadMenu.innerHTML = '<i class="fas fa-spinner fa-spin text-[18px]"></i>';
+        
+        try {
+            const res = await fetch('/upload', { method: 'POST', body: formData });
+            if (!res.ok) throw new Error();
+            const dataArr = await res.json();
+            
+            dataArr.forEach(data => {
+                socket.emit('send_message', { text: '', senderId: currentUser.uid, receiverId: activeChatId, fileUrl: data.fileUrl, fileName: data.fileName, fileType: data.mimeType });
+            });
+            window.scrollToBottom(true);
+        } catch (err) { 
+            showActionModal({ title: 'Upload Failed', desc: 'Could not upload your files. Please try again.', confirmText: 'Close', confirmStyle: 'bg-red-500 text-white hover:bg-red-600', onConfirm: () => document.getElementById('action-modal').classList.replace('flex','hidden') });
+        } finally { 
+            btnUploadMenu.innerHTML = oldIcon; e.target.value = ''; 
+        }
+    });
+
+    document.getElementById('btn-trigger-avatar').addEventListener('click', () => document.getElementById('avatar-upload-input').click());
+    document.getElementById('btn-random-avatar').addEventListener('click', () => {
+        const seed = Math.random().toString(36).substring(7);
+        const styles = ['avataaars', 'bottts', 'adventurer', 'micah', 'lorelei'];
+        currentAvatarUrl = `https://api.dicebear.com/9.x/${styles[Math.floor(Math.random() * styles.length)]}/svg?seed=${seed}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffdfbf,ffd5dc`;
+        document.getElementById('avatar-preview').src = currentAvatarUrl;
+    });
+
+    document.getElementById('avatar-upload-input').addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file || !file.type.startsWith('image/')) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                const size = 256; canvas.width = size; canvas.height = size;
+                const ctx = canvas.getContext('2d');
+                const minDim = Math.min(img.width, img.height);
+                const startX = (img.width - minDim) / 2; const startY = (img.height - minDim) / 2;
+                ctx.drawImage(img, startX, startY, minDim, minDim, 0, 0, size, size);
+                currentAvatarUrl = canvas.toDataURL('image/jpeg', 0.9);
+                document.getElementById('avatar-preview').src = currentAvatarUrl;
+            };
+            img.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+        e.target.value = '';
+    });
+
+    document.getElementById('btn-settings').addEventListener('click', (e) => {
+        e.stopPropagation();
+        originalUsername = userData ? userData.username : '';
+        originalAvatarUrl = userData ? userData.avatarUrl : currentAvatarUrl;
+        document.getElementById('username-input').value = originalUsername;
+        currentAvatarUrl = originalAvatarUrl;
+        document.getElementById('avatar-preview').src = currentAvatarUrl;
+        document.getElementById('btn-close-setup').classList.remove('hidden');
+        document.getElementById('setup-modal').classList.replace('hidden', 'flex');
+    });
+
+    document.getElementById('btn-close-setup').addEventListener('click', () => {
+        currentAvatarUrl = originalAvatarUrl; 
+        document.getElementById('setup-modal').classList.replace('flex', 'hidden');
+    });
+
+    document.getElementById('btn-save-profile').addEventListener('click', () => {
+        const username = document.getElementById('username-input').value.trim();
+        if (!username) return;
+        
+        const userPayload = {
+            id: currentUser.uid, username: username, avatarUrl: currentAvatarUrl, 
+            status: userData?.status || localStatus
+        };
+        
+        socket.emit('update_profile', userPayload);
+        document.getElementById('setup-modal').classList.replace('flex', 'hidden');
+    });
+
+    const profileStatusBtn = document.getElementById('btn-profile-status');
+    const statusMenu = document.getElementById('status-menu');
+    profileStatusBtn.addEventListener('click', (e) => { e.stopPropagation(); statusMenu.classList.toggle('hidden'); });
+    document.addEventListener('click', (e) => { if (!statusMenu.contains(e.target) && e.target !== profileStatusBtn) statusMenu.classList.add('hidden'); });
+    
+    document.querySelectorAll('#status-menu button').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const newStatus = e.currentTarget.dataset.status;
+            if(userData && userData.status !== newStatus) {
+                userData.status = newStatus;
+                localStorage.setItem('nexus_status', newStatus);
+                socket.emit('update_profile', userData);
+            }
+            statusMenu.classList.add('hidden');
+        });
+    });
+
+    document.getElementById('search-users').addEventListener('input', (e) => { searchQuery = e.target.value.toLowerCase(); renderSidebar(); });
+
+    // ==========================================
+    // LOGICĂ NOUĂ: GET MEDIA (CAMERA/MIC FIX) & WEBRTC
+    // ==========================================
+    async function getMedia(type) {
+        let stream;
+        try {
+            const constraints = { audio: true, video: type === 'video' };
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+            
+            const videoBtn = document.getElementById('btn-toggle-video');
+            if (type === 'voice') {
+                videoBtn.innerHTML = '<i class="fas fa-video-slash text-red-400"></i>';
+            } else {
+                videoBtn.innerHTML = '<i class="fas fa-video"></i>';
+            }
+            return stream;
+            
+        } catch (err) {
+            showActionModal({
+                title: 'Permission Denied',
+                desc: 'We could not access your microphone or camera. Please allow permissions in your browser settings.',
+                confirmText: 'Got it',
+                confirmStyle: 'bg-blue-500 text-white hover:bg-blue-600',
+                onConfirm: () => { document.getElementById('action-modal').classList.replace('flex', 'hidden'); }
+            });
+            return null;
+        }
+    }
+
+    function endCallCleanup() {
+        isCalling = false; incomingCallData = null; 
+        soundRing.pause(); soundRing.currentTime = 0; // Oprește soneria
+        soundCalling.pause(); soundCalling.currentTime = 0; // Oprește sunetul de apelare
+        document.getElementById('active-call-modal').classList.replace('flex', 'hidden');
+        document.getElementById('incoming-call-modal').classList.replace('flex', 'hidden');
+        if(peerConnection) { peerConnection.close(); peerConnection = null; }
+        if(localStream) { localStream.getTracks().forEach(track => track.stop()); localStream = null; }
+        document.getElementById('local-video').srcObject = null; document.getElementById('remote-video').srcObject = null;
+    }
+
+    function createPeerConnection(remoteUser) {
+        peerConnection = new RTCPeerConnection(rtcConfig);
+        
+        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+        
+        peerConnection.ontrack = (event) => {
+            document.getElementById('remote-video').srcObject = event.streams[0];
+        };
+        
+        peerConnection.onicecandidate = (event) => {
+            if (event.candidate) {
+                socket.emit('ice_candidate', { to: remoteUser, candidate: event.candidate });
+            }
+        };
+
+        peerConnection.oniceconnectionstatechange = () => {
+            if (peerConnection.iceConnectionState === 'disconnected' || peerConnection.iceConnectionState === 'failed' || peerConnection.iceConnectionState === 'closed') {
+                endCallCleanup();
+            }
+        };
+    }
+
+    document.getElementById('btn-call-video').addEventListener('click', () => initiateCall('video'));
+    document.getElementById('btn-call-voice').addEventListener('click', () => initiateCall('voice'));
+
+    async function initiateCall(type) {
+        if(activeChatId === 'global' || isCalling) return;
+        localStream = await getMedia(type);
+        if(!localStream) return;
+        
+        isCalling = true;
+        document.getElementById('active-call-modal').classList.replace('hidden', 'flex');
+        document.getElementById('local-video').srcObject = localStream;
+        document.getElementById('active-call-status').textContent = 'Ringing...';
+        
+        playAudioSecurely(soundCalling); // Pornește sunetul de așteptare la telefon
+        
+        createPeerConnection(activeChatId);
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        socket.emit('call_user', { userToCall: activeChatId, signalData: offer, from: currentUser.uid, type: type, callerData: userData });
+    }
+
+    // Te sună cineva pe tine
+    socket.on('incoming_call', async (data) => {
+        if (isCalling && incomingCallData && incomingCallData.from === data.from) {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.signal));
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            socket.emit('answer_call', { signal: answer, to: data.from });
+            return;
+        }
+
+        if (isCalling) { socket.emit('reject_call', { to: data.from }); return; }
+        
+        incomingCallData = data;
+        document.getElementById('incoming-caller-name').textContent = data.callerData.username;
+        document.getElementById('incoming-caller-avatar').src = data.callerData.avatarUrl;
+        document.getElementById('incoming-call-icon').className = data.type === 'video' ? 'fas fa-video text-white text-sm' : 'fas fa-phone text-white text-sm';
+        document.getElementById('incoming-call-modal').classList.replace('hidden', 'flex');
+        
+        playAudioSecurely(soundRing); // Începe să sune telefonul
+    });
+
+    // Ai apăsat respingere
+    document.getElementById('btn-reject-call').addEventListener('click', () => {
+        soundRing.pause(); soundRing.currentTime = 0; 
+        document.getElementById('incoming-call-modal').classList.replace('flex', 'hidden');
+        socket.emit('reject_call', { to: incomingCallData.from }); 
+        incomingCallData = null;
+    });
+
+    // Ai apăsat acceptare
+    document.getElementById('btn-accept-call').addEventListener('click', async () => {
+        soundRing.pause(); soundRing.currentTime = 0; 
+        document.getElementById('incoming-call-modal').classList.replace('flex', 'hidden');
+        isCalling = true;
+        
+        localStream = await getMedia(incomingCallData.type);
+        if (!localStream) {
+            socket.emit('reject_call', { to: incomingCallData.from });
+            isCalling = false; return;
+        }
+        
+        document.getElementById('active-call-modal').classList.replace('hidden', 'flex');
+        document.getElementById('local-video').srcObject = localStream;
+        document.getElementById('active-call-status').textContent = 'Connected';
+        
+        createPeerConnection(incomingCallData.from);
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(incomingCallData.signal));
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+        
+        socket.emit('answer_call', { signal: answer, to: incomingCallData.from });
+    });
+
+    // Celălalt acceptă apelul tău
+    socket.on('call_accepted', async (signal) => {
+        soundCalling.pause(); soundCalling.currentTime = 0; // Oprește sunetul de apelare când se răspunde
+        document.getElementById('active-call-status').textContent = 'Connected';
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
+    });
+
+    // Celălalt respinge apelul
+    socket.on('call_rejected', () => { 
+        soundCalling.pause(); soundCalling.currentTime = 0; // Oprește sunetul de apelare când ești refuzat
+        showActionModal({ title: 'Call Declined', desc: 'The user has declined your call.', confirmText: 'Dismiss', confirmStyle: 'bg-slate-500 text-white', onConfirm: () => document.getElementById('action-modal').classList.replace('flex', 'hidden') });
+        endCallCleanup(); 
+    });
+    
+    socket.on('call_ended', () => { endCallCleanup(); });
+
+    document.getElementById('btn-end-call').addEventListener('click', () => {
+        socket.emit('end_call', { to: activeChatId }); endCallCleanup();
+    });
+    
+    document.getElementById('btn-toggle-audio').addEventListener('click', function() {
+        if(!localStream) return;
+        const track = localStream.getAudioTracks()[0];
+        if(track) {
+            track.enabled = !track.enabled;
+            this.innerHTML = track.enabled ? '<i class="fas fa-microphone"></i>' : '<i class="fas fa-microphone-slash text-red-400"></i>';
+        }
+    });
+
+    document.getElementById('btn-toggle-video').addEventListener('click', async function() {
+        if(!localStream) return;
+        const videoTrack = localStream.getVideoTracks()[0]; 
+        
+        if(videoTrack) { 
+            videoTrack.enabled = !videoTrack.enabled;
+            this.innerHTML = videoTrack.enabled ? '<i class="fas fa-video"></i>' : '<i class="fas fa-video-slash text-red-400"></i>'; 
+        } else {
+            try {
+                const vidStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                const newVidTrack = vidStream.getVideoTracks()[0];
+                localStream.addTrack(newVidTrack);
+                if(peerConnection) {
+                    peerConnection.addTrack(newVidTrack, localStream);
+                }
+                document.getElementById('local-video').srcObject = localStream;
+                this.innerHTML = '<i class="fas fa-video"></i>';
+            } catch(e) {
+                showToast("Camera access denied or unavailable", "error");
+            }
+        }
+    });
+    </script>
+</body>
+</html>
