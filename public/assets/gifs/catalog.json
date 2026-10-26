@@ -1,0 +1,82 @@
+[
+  {
+    "id": "hello",
+    "title": "Hello!",
+    "url": "/assets/gifs/hello.gif"
+  },
+  {
+    "id": "thanks",
+    "title": "Thank you",
+    "url": "/assets/gifs/thanks.gif"
+  },
+  {
+    "id": "celebrate",
+    "title": "Let\u2019s celebrate",
+    "url": "/assets/gifs/celebrate.gif"
+  },
+  {
+    "id": "goodnight",
+    "title": "Good night",
+    "url": "/assets/gifs/goodnight.gif"
+  },
+  {
+    "id": "wow",
+    "title": "Wow!",
+    "url": "/assets/gifs/wow.gif"
+  },
+  {
+    "id": "nice",
+    "title": "Nice one",
+    "url": "/assets/gifs/nice.gif"
+  },
+  {
+    "id": "coffee",
+    "title": "Coffee time",
+    "url": "/assets/gifs/coffee.gif"
+  },
+  {
+    "id": "brb",
+    "title": "Be right back",
+    "url": "/assets/gifs/brb.gif"
+  },
+  {
+    "id": "yes",
+    "title": "Yes!",
+    "url": "/assets/gifs/yes.gif"
+  },
+  {
+    "id": "yougotthis",
+    "title": "You got this",
+    "url": "/assets/gifs/yougotthis.gif"
+  },
+  {
+    "id": "welcome",
+    "title": "Welcome",
+    "url": "/assets/gifs/welcome.gif"
+  },
+  {
+    "id": "gg",
+    "title": "Good game",
+    "url": "/assets/gifs/gg.gif"
+  },
+  {
+    "id": "love",
+    "title": "Much love",
+    "url": "/assets/gifs/love.gif"
+  },
+  {
+    "id": "thinking",
+    "title": "Thinking\u2026",
+    "url": "/assets/gifs/thinking.gif"
+  },
+  {
+    "id": "congrats",
+    "title": "Congrats!",
+    "url": "/assets/gifs/congrats.gif"
+  },
+  {
+    "id": "chill",
+    "title": "Take it easy",
+    "url": "/assets/gifs/chill.gif"
+  }
+]

@@ -1,0 +1,227 @@
+{
+  "key": "skypixel-framework",
+  "name": "Skypixel Framework",
+  "description": "MaxUltimat3's personal community for Skypixel Framework updates, testing, support and shared creations.",
+  "publicListing": true,
+  "welcomeMessage": "Welcome to **Skypixel Framework**! Follow project updates, join a test session, ask for help or share what you are building.",
+  "icon": "assets/icon.png",
+  "banner": "assets/banner.gif",
+  "iconCrop": {
+    "x": 50,
+    "y": 52,
+    "zoom": 1
+  },
+  "bannerCrop": {
+    "x": 50,
+    "y": 50,
+    "zoom": 1
+  },
+  "rulesFile": "rules.md",
+  "categories": [
+    "START HERE",
+    "COMMUNITY",
+    "BUILD & TEST",
+    "LIVE ROOMS",
+    "TEAM"
+  ],
+  "roles": [
+    {
+      "key": "admin",
+      "name": "Admin",
+      "color": "#edb66e",
+      "icon": "shield",
+      "permissions": [
+        "manageServer",
+        "manageChannels",
+        "manageRoles",
+        "manageMessages",
+        "moderateMembers",
+        "manageInvites",
+        "inviteMembers",
+        "mentionEveryone",
+        "viewAuditLog"
+      ],
+      "displayMembers": true
+    },
+    {
+      "key": "moderator",
+      "name": "Moderator",
+      "color": "#91c9b0",
+      "icon": "shield",
+      "permissions": [
+        "manageMessages",
+        "kickMembers",
+        "banMembers",
+        "timeoutMembers",
+        "disconnectMembers",
+        "inviteMembers",
+        "viewAuditLog"
+      ],
+      "displayMembers": true
+    },
+    {
+      "key": "tester",
+      "name": "Tester",
+      "color": "#89bafa",
+      "icon": "code",
+      "permissions": [],
+      "displayMembers": true
+    },
+    {
+      "key": "contributor",
+      "name": "Contributor",
+      "color": "#db9bc2",
+      "icon": "sparkle",
+      "permissions": [],
+      "displayMembers": true
+    },
+    {
+      "key": "member",
+      "name": "Member",
+      "color": "#aab4c8",
+      "icon": "heart",
+      "permissions": [],
+      "displayMembers": false
+    }
+  ],
+  "channels": [
+    {
+      "name": "welcome",
+      "type": "announcement",
+      "category": "START HERE",
+      "topic": "Start here: your guide to the community.",
+      "icon": "heart",
+      "post": "posts/welcome.md"
+    },
+    {
+      "name": "rules",
+      "type": "announcement",
+      "category": "START HERE",
+      "topic": "Our shared guidelines. Please read before posting.",
+      "icon": "book",
+      "post": "posts/rules.md"
+    },
+    {
+      "name": "updates",
+      "type": "announcement",
+      "category": "START HERE",
+      "topic": "Official releases, testing sessions and project news.",
+      "icon": "megaphone",
+      "post": "posts/updates.md"
+    },
+    {
+      "name": "general",
+      "type": "text",
+      "category": "COMMUNITY",
+      "topic": "Meet the community and talk about what you are building.",
+      "icon": "chat"
+    },
+    {
+      "name": "introductions",
+      "type": "text",
+      "category": "COMMUNITY",
+      "topic": "Say hello and tell us a little about yourself.",
+      "icon": "heart"
+    },
+    {
+      "name": "showcase",
+      "type": "media",
+      "category": "COMMUNITY",
+      "topic": "Share creations, screenshots, videos, audio and useful documents.",
+      "icon": "image"
+    },
+    {
+      "name": "support",
+      "type": "forum",
+      "category": "BUILD & TEST",
+      "topic": "One topic per question. Include context and what you have tried.",
+      "icon": "help"
+    },
+    {
+      "name": "bug-reports",
+      "type": "forum",
+      "category": "BUILD & TEST",
+      "topic": "One issue per post: device, browser, steps, expected and actual result.",
+      "icon": "code"
+    },
+    {
+      "name": "ideas",
+      "type": "forum",
+      "category": "BUILD & TEST",
+      "topic": "Propose improvements and discuss the details together.",
+      "icon": "sparkle"
+    },
+    {
+      "name": "testing-chat",
+      "type": "text",
+      "category": "BUILD & TEST",
+      "topic": "Coordinate tests and share progress.",
+      "icon": "code"
+    },
+    {
+      "name": "The lounge",
+      "type": "voice",
+      "category": "LIVE ROOMS",
+      "topic": "A relaxed place for conversations.",
+      "icon": "voice"
+    },
+    {
+      "name": "Co-working",
+      "type": "voice",
+      "category": "LIVE ROOMS",
+      "topic": "Build together, share a screen and help one another.",
+      "icon": "code"
+    },
+    {
+      "name": "Community stage",
+      "type": "stage",
+      "category": "LIVE ROOMS",
+      "topic": "Hosted project updates and community discussions.",
+      "icon": "mic"
+    },
+    {
+      "name": "staff-chat",
+      "type": "text",
+      "category": "TEAM",
+      "topic": "Private coordination for the community team.",
+      "icon": "shield",
+      "roles": [
+        "admin",
+        "moderator"
+      ]
+    },
+    {
+      "name": "Staff room",
+      "type": "voice",
+      "category": "TEAM",
+      "topic": "Private staff voice room.",
+      "icon": "shield",
+      "roles": [
+        "admin",
+        "moderator"
+      ]
+    }
+  ],
+  "replaceExistingContent": true,
+  "revision": 2,
+  "retireRoles": [
+    {
+      "name": "Best Tester",
+      "replacement": "tester"
+    }
+  ],
+  "textReplacements": [
+    {
+      "from": "**Best Tester**, ",
+      "to": ""
+    },
+    {
+      "from": "Build, test and connect with the Skypixel Framework community. Official updates, friendly support and a place for your creations.",
+      "to": "MaxUltimat3's personal community for Skypixel Framework updates, testing, support and shared creations."
+    },
+    {
+      "from": "Welcome to **Skypixel Framework**! Say hello, share your ideas and help us build what comes next.",
+      "to": "Welcome to **Skypixel Framework**! Follow project updates, join a test session, ask for help or share what you are building."
+    }
+  ]
+}

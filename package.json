@@ -1,20 +1,27 @@
 {
   "name": "nexus-chat",
-  "version": "1.0.0",
-  "description": "",
+  "version": "2.11.0",
+  "description": "A community-first communication app with servers, channels, direct messages, and WebRTC voice.",
+  "private": true,
   "main": "server.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "type": "commonjs",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "dev": "node --env-file-if-exists=.env --watch server.js",
+    "check": "node scripts/check.js",
+    "test": "node --test",
+    "setup:community": "node --env-file-if-exists=.env scripts/setup-community.js"
+  },
+  "engines": {
+    "node": ">=24.15.0 <25"
+  },
+  "license": "UNLICENSED",
   "dependencies": {
-    "express": "^5.3.0",
-    "multer": "^2.4.0",
-    "socket.io": "^4.8.4",
-    "sqlite3": "^6.0.1"
+    "express": "5.3.0",
+    "multer": "2.4.0",
+    "socket.io": "4.8.4"
+  },
+  "devDependencies": {
+    "ws": "8.21.3"
   }
 }
