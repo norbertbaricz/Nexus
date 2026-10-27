@@ -136,3 +136,162 @@ test('activity rendering explains legacy actions and escapes structured changes 
  assert.ok(html.includes('Server settings updated'));assert.ok(html.includes('Old name'));assert.ok(html.includes('&lt;img'));assert.ok(!html.includes('<img'));assert.ok(html.includes('&lt;b&gt;Actor'));
  assert.ok(auditEntryMarkup({action:'layout.updated',createdAt:'2026-01-01',metadata:{}}).includes('Channels and categories rearranged'));
 });
+
+test('member rows omit role subtitles, keep grouping and profiles retain the full role list',async()=>{
+ const ui=await browserModule('ui.js'),state=fixture();state.servers[0].roles=[{id:'r',name:'Tester',displayMembers:true,position:1}];state.servers[0].members[0].roleIds=['r'];
+ const rows=ui.renderMembers(state);assert.ok(rows.includes('member-section-title'));assert.ok(!rows.includes('<small>'));assert.ok(ui.profileMarkup(state,state.user).includes('Tester'));
+ const sidebar=ui.renderSidebar(state,{muted:true,deafened:true});assert.ok(sidebar.includes('aria-label="Unmute microphone"'));assert.ok(sidebar.includes('aria-label="Undeafen"'));
+ const header=ui.chatHeader({...state,dms:[{id:'d',peerId:state.user.id}],activeConv:'d',activeServer:null},'One',{dm:true});assert.ok(header.includes('data-action="start-call"'));assert.ok(!header.includes('start-video'));
+ state.activeServer=null;state.homeTab='spaces';assert.ok(ui.homeMarkup(state).includes('data-action="search-discovery"'));
+});
+test('DM previews describe actual files and protect spoiler names instead of claiming there are no messages',async()=>{
+ const {messagePreview}=await browserModule('message-preview.js'),ui=await browserModule('ui.js'),state=fixture();
+ assert.equal(messagePreview(null),'No messages yet');
+ for(const [type,label] of [['image/png','Photo'],['image/gif','GIF'],['video/mp4','Video'],['audio/ogg','Audio'],['application/pdf','Document · guide.pdf'],['application/zip','File · bundle.zip']]){
+  const message={text:'',attachments:[{type,name:type==='application/pdf'?'guide.pdf':'bundle.zip'}]};assert.equal(messagePreview(message),label);
+ }
+ assert.equal(messagePreview({attachments:[{type:'image/png',spoiler:true,name:'secret.png'}]}),'Spoiler attachment');assert.equal(messagePreview({attachments:[{},{}]}),'2 attachments');
+ state.activeServer=null;state.homeTab='inbox';state.dms=[{id:'d',peerId:state.user.id,lastMessage:{attachments:[{type:'application/pdf',name:'<script>.pdf'}]}}];
+ const html=ui.renderSidebar(state,{});assert.ok(html.includes('Document · &lt;script&gt;.pdf'));assert.ok(!html.includes('No messages yet'));
+});
+test('public discovery ignores stale responses, appends unique results and retains errors for retry',async()=>{
+ const {DiscoverySearch}=await browserModule('discovery.js'),pending=[];
+ const page=new DiscoverySearch({request:url=>new Promise((resolve,reject)=>pending.push({url,resolve,reject})),onChange:()=>{}});
+ const old=page.search('old'),fresh=page.search('fresh');pending[1].resolve({servers:[{id:'1'}],hasMore:true,nextOffset:24});await fresh;
+ pending[0].resolve({servers:[{id:'old'}],hasMore:false});await old;assert.deepEqual(page.servers,[{id:'1'}]);assert.equal(page.query,'fresh');
+ const more=page.more();assert.ok(pending[2].url.includes('offset=24'));pending[2].resolve({servers:[{id:'1'},{id:'2'}],hasMore:false,nextOffset:null});await more;assert.equal(page.servers.length,2);
+ const failed=page.search('failure');pending[3].reject(new Error('Offline'));await failed;assert.equal(page.error,'Offline');assert.equal(page.loading,false);
+ const cancelled=page.search('cancelled');page.cancel();pending[4].resolve({servers:[{id:'late'}],hasMore:false});await cancelled;assert.equal(page.servers.length,0);
+});
+test('shared tooltip geometry keeps labels inside narrow viewport edges',async()=>{
+ const {tooltipPosition}=await browserModule('tooltips.js');
+ const top=tooltipPosition({left:0,top:0,bottom:40,width:30},{width:270,height:70},{width:320,height:480});assert.ok(top.left>=8);assert.ok(top.top>=40);assert.ok(top.left+270<=312);
+ const bottom=tooltipPosition({left:300,top:450,bottom:480,width:20},{width:200,height:40},{width:320,height:480});assert.ok(bottom.left+200<=312);assert.ok(bottom.top+40<450);
+});
+
+test('floating notices retain a stable viewport anchor while controls scroll underneath',async()=>{
+ const {Notices}=await browserModule('notices.js');let height=80,boxes=[{left:0,right:390,top:740,bottom:790,width:390,height:50}],width=390,viewportHeight=844;
+ const scope={querySelectorAll:()=>boxes.map(box=>({getBoundingClientRect:()=>box}))},root={children:[{}],style:{},getBoundingClientRect:()=>({height})};
+ const notices=Object.create(Notices.prototype);notices.root=root;notices.anchor=null;notices.context=()=>({width,height:viewportHeight,top:0,left:0,inSidebar:false,scope});
+ notices.resize();const original={top:root.style.top,left:root.style.left,width:root.style.width};
+ for(let index=0;index<12;index++){boxes=[{left:0,right:390,top:100+index*35,bottom:140+index*35,width:390,height:40}];notices.resize();assert.deepEqual({top:root.style.top,left:root.style.left,width:root.style.width},original);}
+ const bottom=parseFloat(root.style.top)+height;height=140;notices.resize();assert.equal(parseFloat(root.style.top)+height,bottom);
+ viewportHeight=390;notices.resize(true);assert.ok(parseFloat(root.style.top)>=12);assert.ok(parseFloat(root.style.top)+height<=378);
+});
+test('dense notice placement keeps its compact width across observer notifications',async()=>{
+ const {Notices}=await browserModule('notices.js');const scope={querySelectorAll:()=>[{getBoundingClientRect:()=>({left:0,right:320,top:0,bottom:480,width:320,height:480})}]};
+ const root={children:[{}],style:{},getBoundingClientRect:()=>({height:80})},notices=Object.create(Notices.prototype);notices.root=root;notices.anchor=null;notices.context=()=>({width:320,height:480,top:0,left:0,inSidebar:false,scope});
+ notices.resize();assert.equal(root.style.width,'224px');assert.equal(root.style.top,'12px');for(let index=0;index<8;index++){notices.resize();assert.equal(root.style.width,'224px');assert.equal(root.style.top,'12px');}
+});
+test('all interface palettes are accepted by account sync and retain readable dark surfaces',async()=>{
+ const {PALETTES,paletteTokens}=await browserModule('appearance.js'),ui=await browserModule('ui.js'),{normalizePreferences}=require('../server/preferences');assert.equal(Object.keys(PALETTES).length,16);
+ const luminance=hex=>{const rgb=hex.match(/[\da-f]{2}/gi).map(part=>parseInt(part,16)/255).map(value=>value<=.04045?value/12.92:((value+.055)/1.055)**2.4);return rgb[0]*.2126+rgb[1]*.7152+rgb[2]*.0722;};
+ for(const [key,palette] of Object.entries(PALETTES)){assert.equal(normalizePreferences({palette:key}).palette,key);const tokens=paletteTokens(key);assert.match(tokens['--bg'],/13% 7%/);assert.ok((luminance(palette.accent)+.05)/(luminance(tokens['--accent-ink'])+.05)>7);assert.ok(ui.appearanceMarkup({palette:key}).includes(`data-palette="${key}" aria-pressed="true"`));}
+});
+test('status avatars use shared descriptions and standalone profiles support keyboard focus',async()=>{
+ const ui=await browserModule('ui.js'),state=fixture();state.user.displayName='A < B';state.user.status='dnd';
+ const html=ui.profileMarkup(state,state.user);assert.ok(html.includes('data-tooltip="A &lt; B · Do not disturb"'));assert.ok(html.includes('tabindex="0" role="img" aria-label="A &lt; B · Do not disturb"'));
+ const sidebar=ui.renderSidebar(state,{});assert.ok(!sidebar.includes('tabindex="0" role="img"'));assert.ok(!html.includes('title="Do not disturb"'));
+});
+test('an open shared tooltip follows status changes and preserves the latest native description on exit',async()=>{
+ const {Tooltips}=await browserModule('tooltips.js'),attributes=new Map([['title','Away']]),seen=[];
+ const anchor={isConnected:true,dataset:{tooltip:'Person · Away'},getAttribute:key=>attributes.get(key)??null,setAttribute:(key,value)=>attributes.set(key,value),removeAttribute:key=>attributes.delete(key),hasAttribute:key=>attributes.has(key)};
+ const tooltip=Object.create(Tooltips.prototype);Object.assign(tooltip,{anchor,originalTitle:'Online',node:{hidden:false},anchorObserver:{disconnect(){}},show(){seen.push(this.label());}});
+ tooltip.refresh();assert.deepEqual(seen,['Person · Away']);assert.equal(attributes.has('title'),false);attributes.set('title','Do not disturb');anchor.dataset.tooltip='Person · Do not disturb';tooltip.refresh();tooltip.hide();assert.equal(attributes.get('title'),'Do not disturb');assert.equal(tooltip.node.hidden,true);
+});
+
+function viewerFixture(t,{type='image/png',width=1600,height=900}={}){
+ const observed=[],events=new Map(),content={style:{}},out={disabled:false},inside={disabled:false};
+ const stage={isConnected:true,clientWidth:360,clientHeight:480,scrollLeft:0,scrollTop:0,classList:{toggle(){}},querySelector(selector){return selector==='.viewer-stage-content'?content:media;},get scrollWidth(){return Math.max(this.clientWidth,parseFloat(content.style.width)||0);},get scrollHeight(){return Math.max(this.clientHeight,parseFloat(content.style.height)||0);}};
+ let paused=0,markup='',renders=0;
+ const media={style:{},classList:{contains:name=>name==='viewer-image'&&type.startsWith('image/')},naturalWidth:type.startsWith('image/')?width:0,naturalHeight:type.startsWith('image/')?height:0,videoWidth:type.startsWith('video/')?width:0,videoHeight:type.startsWith('video/')?height:0,addEventListener:(name,callback)=>events.set(name,callback),pause(){paused++;}};
+ class Observer {constructor(callback){this.callback=callback;observed.push(this);}observe(node){this.node=node;}disconnect(){this.node=null;}}
+ globalValue(t,'window',{addEventListener(){}});globalValue(t,'document',{querySelector:selector=>selector==='.viewer-stage'?stage:selector.includes('data-delta="-1"')?out:inside});globalValue(t,'ResizeObserver',Observer);globalValue(t,'getComputedStyle',()=>({paddingLeft:'12px',paddingRight:'12px',paddingTop:'12px',paddingBottom:'12px'}));
+ const state={messages:[{id:'m_viewer',text:'A caption',attachments:[{url:'/files/fixture',name:'fixture',type}]}]};
+ return {state,stage,media,content,events,observed,out,inside,options:{getState:()=>state,showModal:html=>{markup=html;renders++;},escape:value=>String(value),canDownload:()=>false},get markup(){return markup;},get renders(){return renders;},get paused(){return paused;}};
+}
+
+test('image zoom stays bounded, preserves the open viewer and Fit resets its scroll',async t=>{
+ const f=viewerFixture(t),{ImageViewer}=await browserModule('image-viewer.js'),viewer=new ImageViewer(f.options);
+ viewer.open('m_viewer');assert.equal(f.out.disabled,true);assert.equal(f.renders,1);
+ assert.equal(f.media.style.width,'');assert.equal(f.content.style.height,'');
+ for(let n=0;n<30;n++)viewer.zoomBy(1);
+ assert.equal(viewer.zoom,4);assert.equal(f.inside.disabled,true);assert.equal(f.renders,1);assert.ok(f.stage.scrollLeft>0);
+ viewer.resetZoom();assert.equal(viewer.zoom,1);assert.equal(f.stage.scrollLeft,0);assert.equal(f.stage.scrollTop,0);assert.equal(f.out.disabled,true);assert.equal(f.inside.disabled,false);
+ for(let n=0;n<30;n++)viewer.zoomBy(-1);assert.equal(viewer.zoom,1);
+});
+
+test('video retains automatic containment through metadata and resizing, and closing releases playback',async t=>{
+ const f=viewerFixture(t,{type:'video/mp4',width:0,height:0}),{ImageViewer}=await browserModule('image-viewer.js'),viewer=new ImageViewer(f.options);
+ viewer.open('m_viewer');assert.ok(!f.markup.includes('data-action="viewer-zoom"'));assert.equal(f.observed[0].node,f.stage);
+ viewer.zoomBy(1);assert.equal(viewer.zoom,1);
+ f.media.videoWidth=1080;f.media.videoHeight=1920;f.events.get('loadedmetadata')();
+ assert.equal(f.media.style.height,'');assert.equal(f.media.style.width,'');
+ f.stage.clientWidth=700;f.stage.clientHeight=200;f.observed[0].callback();
+ assert.equal(f.media.style.height,'');assert.equal(f.media.style.width,'');
+ assert.equal(f.content.style.width,'');assert.equal(f.content.style.height,'');assert.equal(f.renders,1);
+ viewer.close();assert.equal(f.paused,1);assert.equal(f.observed[0].node,null);assert.equal(viewer.stage,null);assert.equal(viewer.items.length,0);
+});
+
+test('switching media pauses playback and keeps one close action with no empty footer',async t=>{
+ const f=viewerFixture(t,{type:'audio/wav'}),{ImageViewer}=await browserModule('image-viewer.js'),viewer=new ImageViewer(f.options);
+ f.state.messages[0].text='';f.state.messages[0].attachments.push({url:'/files/second',name:'Second',type:'audio/wav'});
+ viewer.open('m_viewer');assert.equal((f.markup.match(/data-action="close-modal"/g)||[]).length,1);assert.ok(f.markup.includes('aria-label="Media navigation"'));
+ viewer.navigate(1);assert.equal(viewer.index,1);assert.equal(f.paused,1);assert.equal(f.renders,2);
+ f.state.messages[0].attachments.pop();viewer.open('m_viewer');assert.ok(!f.markup.includes('viewer-footer'));assert.ok(!f.markup.includes('viewer-download'));
+});
+
+test('each server restores its last channel across every supported channel type',async()=>{
+ const {lastServerChannel,validChannelHistory}=await browserModule('navigation.js');
+ for(const type of ['text','announcement','forum','media','voice','stage']){
+  const server={id:'s_one',channels:[{id:'c_general',name:'general',type:'text'},{id:'c_last',name:'Last channel',type}]};
+  const history=validChannelHistory([server],JSON.parse(JSON.stringify({s_one:'c_last'})));
+  assert.equal(lastServerChannel(server,history).id,'c_last',type);
+ }
+});
+
+test('server history remains independent across servers, channel renames and reordering',async()=>{
+ const {lastServerChannel,validChannelHistory}=await browserModule('navigation.js');
+ const servers=[{id:'s_one',channels:[{id:'c_one',name:'Renamed',type:'forum'},{id:'c_general',name:'general',type:'text'}]},
+  {id:'s_two',channels:[{id:'c_other',name:'Different first channel',type:'text'},{id:'c_two',name:'Stage',type:'stage'}]}];
+ const history=validChannelHistory(servers,JSON.parse(JSON.stringify({s_one:'c_one',s_two:'c_two'})));
+ assert.equal(lastServerChannel(servers[0],history).id,'c_one');assert.equal(lastServerChannel(servers[1],history).id,'c_two');
+ servers[0].channels.reverse();assert.equal(lastServerChannel(servers[0],history).id,'c_one');
+ assert.deepEqual(history,{s_one:'c_one',s_two:'c_two'});
+});
+
+test('removed channels, lost server access and channel IDs from another server are pruned',async()=>{
+ const {lastServerChannel,validChannelHistory}=await browserModule('navigation.js');
+ const servers=[{id:'s_one',channels:[{id:'c_general',name:'general',type:'text'}]},
+  {id:'s_two',channels:[{id:'c_two',name:'Allowed',type:'text'}]}];
+ const history=validChannelHistory(servers,{s_one:'c_removed',s_two:'c_general',s_left:'c_hidden'});
+ assert.deepEqual(history,{});assert.equal(lastServerChannel(servers[0],history).id,'c_general');
+ assert.deepEqual(validChannelHistory(servers,{s_one:'c_general',s_two:'c_two',s_left:'c_hidden'}),{s_one:'c_general',s_two:'c_two'});
+ servers[0].channels=[];assert.equal(lastServerChannel(servers[0],{s_one:'c_general'}),null);
+});
+
+test('first visits and old or malformed navigation records retain the existing default channel',async()=>{
+ const {lastServerChannel,validChannelHistory}=await browserModule('navigation.js');
+ const server={id:'s_one',channels:[{id:'c_first',name:'First',type:'announcement'},{id:'c_general',name:'general',type:'text'}]};
+ for(const history of [undefined,null,0,'invalid',[],{s_one:[]},{s_one:{id:'c_first'}}]){
+  const clean=validChannelHistory([server],history);assert.deepEqual(clean,{});assert.equal(lastServerChannel(server,clean).id,'c_general');
+ }
+ assert.deepEqual(validChannelHistory([server],Object.create({s_one:'c_first'})),{});
+ server.channels.pop();assert.equal(lastServerChannel(server,{}).id,'c_first');server.channels=[];assert.equal(lastServerChannel(server,{}),null);
+});
+
+test('people query normalization accepts one optional @ and keeps short-input handling predictable',async()=>{
+ const {normalizeUsernameQuery}=await browserModule('chat-tools.js');
+ for(const query of ['maxultimat3','@maxultimat3','  @maxultimat3  ','@ maxultimat3'])assert.equal(normalizeUsernameQuery(query),'maxultimat3');
+ assert.equal(normalizeUsernameQuery('@'),'');assert.equal(normalizeUsernameQuery('@a'),'a');assert.equal(normalizeUsernameQuery('@@user'),'@user');
+ assert.equal(normalizeUsernameQuery('hello@user'),'hello@user');assert.equal(normalizeUsernameQuery(null),'');
+});
+
+test('failed avatar images use safe initials without changing other media or the presence wrapper',async()=>{
+ const ui=await browserModule('ui.js'),art={dataset:{avatarInitials:'KG'},textContent:''};
+ const avatar=ui.avatar({id:'u_kg',displayName:'KG Member',avatar:'/files/f_image',status:'online'},{status:true});
+ assert.ok(avatar.includes('data-avatar-initials="KM"'));assert.ok(avatar.includes('presence-ring'));assert.ok(avatar.includes('/files/f_image'));
+ assert.equal(ui.avatarImageFailed({matches:selector=>selector==='.avatar-art > img',parentElement:art}),true);assert.equal(art.textContent,'KG');
+ art.dataset.avatarInitials='<safe>';ui.avatarImageFailed({matches:()=>true,parentElement:art});assert.equal(art.textContent,'<safe>');
+ assert.equal(ui.avatarImageFailed({matches:()=>false,parentElement:art}),false);assert.equal(ui.avatarImageFailed(null),false);
+});

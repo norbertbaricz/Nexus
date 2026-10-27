@@ -163,3 +163,28 @@ test('the answerer sends through the offered m-lines and retires unassociated lo
  assert.deepEqual(f.call.mediaMids(pending),{audio:'0',camera:'1',screen:'2'});
  await f.call.toggleVideo();assert.equal(pending.cameraTransceiver.sender.track,null);assert.ok(pending.screenTransceiver.sender.track);
 });
+
+test('pre-call mute disables the captured microphone before joining and persists between rooms',async t=>{
+ const f=await fixture(t);f.call.toggleMute();assert.equal(f.call.muted,true);assert.equal(f.events.length,0);
+ await f.call.join('room');assert.equal(f.call.localStream.getAudioTracks()[0].enabled,false);
+ assert.deepEqual(f.events.find(event=>event.event==='voice:join').payload,{conversationId:'room',muted:true,deafened:false});
+ f.call.leave();assert.equal(f.call.muted,true);await f.call.join('another');assert.equal(f.call.localStream.getAudioTracks()[0].enabled,false);
+ f.call.toggleMute();assert.equal(f.call.localStream.getAudioTracks()[0].enabled,true);
+});
+test('pre-call deafen mutes immediately and undeafen restores the chosen microphone state',async t=>{
+ const f=await fixture(t);f.call.toggleDeafen();assert.equal(f.call.muted,true);await f.call.join('room');
+ assert.equal(f.call.deafened,true);assert.equal(f.call.localStream.getAudioTracks()[0].enabled,false);
+ f.call.toggleDeafen();assert.equal(f.call.muted,false);assert.equal(f.call.localStream.getAudioTracks()[0].enabled,true);
+ f.call.toggleMute();f.call.toggleDeafen();f.call.toggleDeafen();assert.equal(f.call.muted,true);
+ f.call.toggleDeafen();f.call.toggleMute();assert.equal(f.call.deafened,false);assert.equal(f.call.muted,false);
+});
+test('stage listener restrictions do not overwrite manual audio choices and reconnect preserves deafen',async t=>{
+ const f=await fixture(t,{canSpeak:false});await f.call.join('stage');assert.equal(f.call.muted,true);f.call.leave();assert.equal(f.call.muted,false);
+ const g=await fixture(t);g.call.toggleDeafen();await g.call.join('room');g.handlers.disconnect();assert.equal(g.call.deafened,true);
+ await g.call.reconnect();assert.equal(g.call.deafened,true);assert.equal(g.call.localStream.getAudioTracks()[0].enabled,false);
+});
+test('the room acknowledgement can restrict a stale local microphone permission before peers are created',async t=>{
+ const f=await fixture(t,{joinAck:callback=>callback(null,{ok:true,peers:[],canSpeak:false})});
+ await f.call.join('room');assert.equal(f.call.stageListener,true);assert.equal(f.call.muted,true);assert.equal(f.call.localStream.getAudioTracks()[0].enabled,false);
+ assert.ok(f.events.filter(event=>event.event==='voice:update').every(event=>event.payload.muted===true));f.call.leave();assert.equal(f.call.muted,false);
+});

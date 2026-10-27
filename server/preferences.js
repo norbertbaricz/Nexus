@@ -2,7 +2,7 @@
 
 // Synced values follow an account; panel sizes and OS permissions stay local.
 const PREFERENCE_DEFAULTS = Object.freeze({ palette: 'coral', sounds: true, soundVolume: 45, motion: true, compact: false, gestures: true, mediaLayout: 'grid', forumLayout: 'grid' });
-const PALETTE_KEYS = new Set(['coral','violet','blue','teal','green','gold','rose','slate']);
+const PALETTE_KEYS = new Set(['coral','violet','blue','teal','green','gold','rose','slate','ruby','ember','citrus','mint','arctic','indigo','plum','sand']);
 const BOOLEAN_KEYS = new Set(['sounds','motion','compact','gestures']);
 function normalizePreferences(patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch) || Object.keys(patch).length > Object.keys(PREFERENCE_DEFAULTS).length) throw new Error('Choose valid account preferences.');

@@ -48,6 +48,8 @@ const CONFIG = Object.freeze({
   creatorUserId: process.env.CREATOR_USER_ID || '',
   creatorClaimToken: process.env.CREATOR_CLAIM_TOKEN || '',
   creatorUsername: 'maxultimat3',
+  earlyMemberWindowDays: Number(process.env.EARLY_MEMBER_WINDOW_DAYS || 90),
+  earlyMemberEndsAt: (process.env.EARLY_MEMBER_ENDS_AT || '').trim(),
   jsonBodyLimit: '256kb',
   idleAfterMs: 5 * 60 * 1000,
   mutationsPerMinute: 100,
@@ -62,7 +64,7 @@ const CONFIG = Object.freeze({
   maxServerRulesLength: 32000,
   maxServerRoles: 20,
   maxRoleNameLength: 32,
-  discoveryPageSize: 24,
+  discoveryPageSize: 24, discoveryQueryLength: 80, discoveryMaxOffset: 1000000,
   rtcConnectionTimeoutMs: 25000,
   rtcRestartDelayMs: 4000,
   rtcMaxRestarts: 2,
@@ -75,5 +77,8 @@ const CONFIG = Object.freeze({
     ...(process.env.TURN_URLS ? [{ urls: process.env.TURN_URLS.split(',').map(value => value.trim()).filter(Boolean), username: process.env.TURN_USERNAME || '', credential: process.env.TURN_CREDENTIAL || '' }] : []),
   ],
 });
+
+if (!Number.isFinite(CONFIG.earlyMemberWindowDays) || CONFIG.earlyMemberWindowDays < 0) throw new Error('EARLY_MEMBER_WINDOW_DAYS must be a nonnegative number.');
+if (CONFIG.earlyMemberEndsAt && (!/T.*(?:Z|[+-]\d{2}:\d{2})$/.test(CONFIG.earlyMemberEndsAt) || !Number.isFinite(Date.parse(CONFIG.earlyMemberEndsAt)))) throw new Error('EARLY_MEMBER_ENDS_AT must be an ISO timestamp with a timezone.');
 
 module.exports = { CONFIG };

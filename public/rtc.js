@@ -10,11 +10,11 @@ const stopStream = stream => stream?.getTracks().forEach(track => { track.onende
 
 export class NexusCall {
   constructor({ getSocket, getConfig, onChange, onIncoming, onError, mediaDevices = globalThis.navigator?.mediaDevices,
-    peerFactory = config => new RTCPeerConnection(config), streamFactory = () => new MediaStream(), getMediaAllowed = () => true, getCanSpeak = () => true, getPeerAllowed = () => true }) {
-    Object.assign(this, { getSocket, getConfig, onChange, onIncoming, onError, mediaDevices, peerFactory, streamFactory, getMediaAllowed, getCanSpeak, getPeerAllowed });
+    peerFactory = config => new RTCPeerConnection(config), streamFactory = () => new MediaStream(), getMediaAllowed = () => true, getCanSpeak = () => true, getPeerAllowed = () => true, onAudioState = () => {} }) {
+    Object.assign(this, { getSocket, getConfig, onChange, onIncoming, onError, mediaDevices, peerFactory, streamFactory, getMediaAllowed, getCanSpeak, getPeerAllowed, onAudioState });
     this.active = null; this.peers = new Map(); this.pendingSignals = []; this.generation = 0;
     this.localStream = null; this.cameraStream = null; this.screenStream = null;
-    this.muted = false; this.deafened = false; this.video = false; this.sharing = false; this.joining = false;
+    this.preferredMuted = false; this.muted = false; this.deafened = false; this.video = false; this.sharing = false; this.joining = false;
     this.connectionIssue = ''; this.cameraPending = false; this.screenPending = false; this.resumeAfterReconnect = null; this.stageListener = false;
   }
   bind(socket) {
@@ -68,11 +68,12 @@ export class NexusCall {
     try {
       const stream = canSpeak || video ? await this.mediaDevices.getUserMedia({ audio: canSpeak ? AUDIO_CONSTRAINTS : false, video: video ? this.cameraConstraints() : false }) : this.streamFactory();
       if (generation !== this.generation) { stopStream(stream); return; }
-      this.localStream = stream; this.video = video; this.muted = false; this.deafened = false; this.connectionIssue = '';
-      const result = await this.emit('voice:join', { conversationId });
+      this.localStream = stream; this.video = video; this.stageListener = !canSpeak; this.connectionIssue = '';
+      this.applyAudioState(); // Disable captured audio before any peer can receive it.
+      const result = await this.emit('voice:join', { conversationId, muted: this.muted, deafened: this.deafened });
       if (generation !== this.generation) return;
-      this.stageListener = !canSpeak || Boolean(result.stageListener);
-      if (this.stageListener) { this.muted = true; this.syncAudio(); }
+      this.stageListener = !canSpeak || result.canSpeak === false || Boolean(result.stageListener);
+      this.applyAudioState();
       this.active = { conversationId, startedAt: Date.now() }; this.onChange();
       const pending = this.pendingSignals.splice(0);
       for (const signal of pending) await this.signal(signal);
@@ -239,8 +240,17 @@ export class NexusCall {
   }
   mediaMids(peer) { return { audio: peer.audioTransceiver.mid, camera: peer.cameraTransceiver.mid, screen: peer.screenTransceiver.mid }; }
   async reconnect() { const resume = this.resumeAfterReconnect; this.resumeAfterReconnect = null; if (resume && this.getSocket()?.connected) await this.join(resume.conversationId, { video: resume.video }); }
-  toggleMute() { if (this.stageListener) { this.onError('You are listening to this stage. Only hosts can speak.'); return; } this.muted = !this.muted; this.syncAudio(); this.update().catch(error => this.onError(error.message)); }
-  toggleDeafen() { this.deafened = !this.deafened; this.syncAudio(); this.update().catch(error => this.onError(error.message)); }
+  applyAudioState() { this.muted = this.preferredMuted || this.deafened || this.stageListener; this.syncAudio(); }
+  setAudioState({ muted = false, deafened = false } = {}) {
+    this.preferredMuted = Boolean(muted); this.deafened = Boolean(deafened); this.applyAudioState();
+    this.onAudioState({ muted: this.preferredMuted, deafened: this.deafened }); this.onChange();
+    this.update().catch(error => this.onError(error.message));
+  }
+  toggleMute() {
+    if (this.stageListener) { this.onError('You are listening to this stage. Only hosts can speak.'); return; }
+    this.setAudioState({ muted: this.deafened ? false : !this.preferredMuted, deafened: false });
+  }
+  toggleDeafen() { this.setAudioState({ muted: this.preferredMuted, deafened: !this.deafened }); }
   syncAudio() { this.localStream?.getAudioTracks().forEach(track => { track.enabled = !this.muted && !this.deafened; }); }
   async replaceVideo() {
     await Promise.all([...this.peers.values()].flatMap(peer => [peer.cameraTransceiver.sender.replaceTrack(this.currentCameraTrack()), peer.screenTransceiver.sender.replaceTrack(this.currentScreenTrack())]));
@@ -306,6 +316,6 @@ export class NexusCall {
     for (const stream of [this.localStream, this.cameraStream, this.screenStream]) stopStream(stream);
     this.active = null; this.localStream = null; this.cameraStream = null; this.screenStream = null;
     this.resumeAfterReconnect = null; this.stageListener = false;
-    this.muted = false; this.deafened = false; this.video = false; this.sharing = false; this.joining = false; this.connectionIssue = ''; this.cameraPending = false; this.screenPending = false; this.onChange();
+    this.applyAudioState(); this.video = false; this.sharing = false; this.joining = false; this.connectionIssue = ''; this.cameraPending = false; this.screenPending = false; this.onChange();
   }
 }

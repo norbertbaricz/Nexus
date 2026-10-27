@@ -37,7 +37,7 @@ function installCommunity(app, ctx) {
     owner(req.params.id, req.userId); const target = member(req.params.id, req.body.userId);
     if (target.userId === req.userId) throw new HttpError(400, 'Choose another member.');
     transaction(db, () => { db.prepare("UPDATE members SET role='member' WHERE serverId=? AND userId=?").run(req.params.id, req.userId); db.prepare("UPDATE members SET role='owner' WHERE serverId=? AND userId=?").run(req.params.id, target.userId); db.prepare('UPDATE servers SET ownerId=? WHERE id=?').run(target.userId, req.params.id); });
-    audit(req.params.id, req.userId, 'ownership.transferred', target.userId); refreshServerAccess(req.params.id); updateWorkspace(serverUsers(req.params.id)); res.json({ ok: true });
+    audit(req.params.id, req.userId, 'ownership.transferred', target.userId); refreshServerAccess(req.params.id); updateWorkspace(serverUsers(req.params.id)); ctx.refreshUserBadges([req.userId,target.userId]); res.json({ ok: true });
   });
   app.get('/api/servers/:id/moderation', auth, (req, res) => {
     member(req.params.id,req.userId);if(!['moderateMembers','kickMembers','banMembers','timeoutMembers','disconnectMembers'].some(key=>ctx.hasPermission(req.params.id,req.userId,key)))throw new HttpError(403,'You do not have moderation permission.'); res.json({ entries: db.prepare('SELECT m.*,u.displayName,u.username FROM moderations m JOIN users u ON u.id=m.userId WHERE m.serverId=? AND (m.expiresAt IS NULL OR m.expiresAt>?)').all(req.params.id, Date.now()) });

@@ -4,7 +4,7 @@
 
 Nexus is a Node.js communication app with real accounts, communities, channels, private messages and WebRTC calls. Creating an account signs you in immediately. Ordinary accounts start with their own empty workspace. Personal community data can be imported explicitly for its owner. Communities, conversations, profiles and files are persisted by the server.
 
-All application copy, comments and documentation are in English. Release 2.11 refines settings buttons, inline artwork editing and narrow composers, adds meaningful activity details, and separates the optional personal community import from normal application startup. See [the latest changes](docs/CHANGES_2.11.md), [personal community setup](docs/COMMUNITY_SETUP.md), [creator setup](docs/CREATOR_SETUP.md), [request coverage](docs/FEATURE_STATUS.md) and [validation](docs/VALIDATION.md).
+All application copy, comments and documentation are in English. Release 2.17 loads current profile artwork for people found before a DM or shared server exists, accepts both username and @username in people search, and uses initials when an avatar cannot load. See [the latest changes](docs/CHANGES_2.17.md), [personal community setup](docs/COMMUNITY_SETUP.md), [creator setup](docs/CREATOR_SETUP.md), [request coverage](docs/FEATURE_STATUS.md) and [validation](docs/VALIDATION.md).
 
 ## Run
 
@@ -21,7 +21,7 @@ A real multiuser service needs one running Nexus server that everyone connects t
 
 ## Update an existing installation
 
-Stop Nexus, copy the updated source into the existing installation, and keep its `.env` and `data/` directory. Run `npm ci`, then `npm start`. Normal startup does not import personal server content. For the prepared personal server, stop Nexus and run setup-community.bat once; see [COMMUNITY_SETUP.md](docs/COMMUNITY_SETUP.md). Existing imports can be upgraded explicitly with the same command.
+Stop Nexus, copy the updated source into the existing installation, and keep its `.env` and `data/` directory. Run `npm ci`, then `npm start`. Normal startup does not import personal server content. For the prepared personal server, stop Nexus and run setup-community.bat once; see [COMMUNITY_SETUP.md](docs/COMMUNITY_SETUP.md). Existing imports can be upgraded explicitly with the same command. Replace all application source files together and restart the Node process after copying them. The running process retains one complete client build; reload the browser page after restarting to load the new build. Keep `.env` and `data/` throughout the update.
 
 ## Account-to-conversation flow
 
@@ -31,14 +31,14 @@ Stop Nexus, copy the updated source into the existing installation, and keep its
 4. Send messages and files, reply, react, pin or search. Refreshing the browser retrieves the server's saved history.
 5. Join a voice room or start a direct call. Microphone access, camera and screen sharing use actual browser media devices.
 
-The server synchronizes appearance, sound, motion, compact mode, gestures and media layout for each account. The browser retains device-specific panel sizes, navigation, unsent drafts and pending preference changes. Messages still require a connection to the service.
+The server synchronizes appearance, sound, motion, compact mode, gestures and media layout for each account. The browser retains device-specific panel sizes, navigation, unsent drafts, per-account microphone/deafen choices and pending preference changes. Messages still require a connection to the service.
 
 ## Included
 
 - Account registration, login and logout; asynchronously hashed passwords and server-side sessions.
 - Servers with owner/member permissions, custom roles, rules, invitation links and invite rotation.
 - Channel editing and deletion, role-restricted private channels, read-only text channels and voice media permissions.
-- Public server discovery is opt-in. Joined servers stay in the sidebar; recommendations list actual public servers on this Nexus service.
+- Public server discovery is opt-in. Joined servers stay in the sidebar; recommendations list actual public servers on this Nexus service. The separate Search public servers button finds public names/descriptions beyond the first page.
 - Six channel types: text, announcements, forums, media/file galleries, voice rooms and stages, with ordered/collapsible categories and editable icons.
 - Independent forum/gallery grid/list layouts, separate publishing dialogs, forum covers/post thumbnails and an in-app media viewer with zoom.
 - Twenty-six server permissions with basic member defaults, role Allow/Deny/Inherit controls and protected role delegation.
@@ -51,8 +51,8 @@ The server synchronizes appearance, sound, motion, compact mode, gestures and me
 - Confirmed deletion of a full DM for both participants, owner-only permanent server deletion, and password-confirmed self-deletion with explicit handling for owned servers.
 - An optional personal community data bundle and explicit local importer; normal startup and registration remain independent of personal content.
 - Persistent account blocking across DMs, shared server text, member lists and peer media, with an unblock list.
-- Eight dark interface palettes in Settings → Appearance, account badges beside display names, separate server roles, and thicker presence rings around avatars.
-- Permanent usernames, editable display names, account badges, bios, pronouns, and animated GIF avatars and banners.
+- Sixteen dark interface palettes in Settings → Appearance, account badges beside display names, separate server roles, and thicker presence rings around avatars.
+- Permanent usernames, editable display names, account badges, bios, pronouns, and animated GIF avatars and banners. Early member can be earned only during the fixed launch window; existing awards remain permanent. See [badge settings](docs/BADGES.md).
 - Real WebRTC audio/video, screen sharing, microphone mute, deafen and incoming direct calls.
 - Two main sections: Messages and Servers, direct channel navigation, compact message menus and responsive layouts. Messages open only after selecting a person from the sidebar.
 - Larger profiles and settings, manually positioned artwork, bounded resizable sidebars and a persistent settings dialog that keeps drafts across tabs. Voice hides the members panel by default and remembers its own toggle preference.
@@ -210,7 +210,7 @@ Nexus/
 
 ## Existing data and backups
 
-Upgrading from Nexus 2.1, 2.2, 2.3, 2.4, 2.5, 2.6 or 2.7 keeps the existing `data/` directory and `.env`. The additive schema migrations add server banners, role assignments, rules, listing preferences, categories, moderation records, upload sessions, badges, channel settings, account blocks, member permission defaults, role denials, channel covers and accepted answers. Schema 8 preserves existing accounts, messages, invitations, uploads, role overrides and pin receipts, adds image positions and ordered member display, and converts the two retired channel types. Legacy accepted-answer metadata remains stored for compatibility, without a Q&A interface. Older pins start without a false new-pin notification. Existing invitation roles retain invitation rotation during the one-time migration; later permission changes are not reset on restart.
+Upgrading from Nexus 2.1, 2.2, 2.3, 2.4, 2.5, 2.6 or 2.7 keeps the existing `data/` directory and `.env`. The additive schema migrations add server banners, role assignments, rules, listing preferences, categories, moderation records, upload sessions, badges, channel settings, account blocks, member permission defaults, role denials, channel covers and accepted answers. Schema 8 preserves existing accounts, messages, invitations, uploads, role overrides and pin receipts, adds image positions and ordered member display, and converts the two retired channel types. Schema 9 adds bounded activity metadata, and the owner index accelerates current ownership checks. Legacy accepted-answer metadata remains stored for compatibility, without a Q&A interface. Older pins start without a false new-pin notification. Existing invitation roles retain invitation rotation during the one-time migration; later permission changes are not reset on restart.
 
 The supplied original database and uploads are preserved under `legacy/`. They are not served to browsers. New accounts use `data/nexus.sqlite`; the legacy database is never overwritten.
 
@@ -226,6 +226,6 @@ The original proprietary Skypixel `LICENSE.txt` remains unchanged. The project i
 
 ## Creator identity and security
 
-An existing `MaxUltimat3` username is automatically bound to its account ID on the first upgraded start. On a fresh installation, set `CREATOR_CLAIM_TOKEN` privately and enter it in the creator registration field. Remove it after claiming the account. Display-name changes do not affect the badge. The creator’s publicly listed `Skypixel Framework` server sorts first with an official marker; using that name on another account does not grant official status.
+An existing `MaxUltimat3` username is automatically bound to its account ID on the first upgraded start. On a fresh installation, set `CREATOR_CLAIM_TOKEN` privately and enter it in the creator registration field. Remove it after claiming the account. Display-name changes do not affect the badge. The single imported official-server ID sorts first when publicly listed and still owned by the creator. A matching server name never grants official status; see [personal community setup](docs/COMMUNITY_SETUP.md).
 
 See [SECURITY.md](docs/SECURITY.md) for precise storage and file-access behavior. Browser-delivered UI and visible images can be inspected or copied by their recipients. Server files and private uploads are not exposed as a static directory. Back up data before replacing code, preserve `.env` and `data/`, run `npm ci`, restart, then force-refresh browser assets.

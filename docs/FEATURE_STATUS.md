@@ -1,10 +1,42 @@
-# Request coverage — Nexus 2.11
+# Request coverage — Nexus 2.17
 
-Date: 2026-10-26
+Date: 2026-10-27
 
 This record maps the latest follow-up and the earlier 19-item request list to delivered behavior and actual evidence. Browser size checks and synthetic touch fixtures do not certify every physical device or operating-system keyboard. See VALIDATION.md for the distinction and deployment boundaries.
 
-## Latest screenshot follow-up in 2.11
+## Latest people-search follow-up in 2.17
+
+People search accepts username and @username, including trimmed whitespace and case differences. Current assigned profile pictures and banners can load for signed-in, unblocked search viewers before a DM/shared server exists. Unused/replaced profile uploads are owner-only, and other private file permissions retain their existing checks. Failed avatar images use safe initials while preserving the presence wrapper. New message and quick search use the same people-query behavior; message/discovery searches retain their literal queries. See [CHANGES_2.17.md](CHANGES_2.17.md) and [VALIDATION.md](VALIDATION.md).
+
+## Retained mute-layout follow-up in 2.16.1
+
+The shared server mute warning has bounded flex widths and wrapping text, including long unbroken reasons and multi-unit durations. Voice/stage warnings use the bottom footer space and retain phone safe-area padding. Long details have an internal scroller with keyboard focus. Voice controls refresh on moderation/policy updates through the existing stable media view, so applying or lifting a mute updates the warning without replacing media tiles. See [CHANGES_2.16.1.md](CHANGES_2.16.1.md) and [VALIDATION.md](VALIDATION.md).
+
+## Retained navigation follow-up in 2.16
+
+Each server remembers its own last selected channel by ID. Returning from Messages, another server or a reload restores it instead of always selecting general. All six channel types are supported. The existing per-account, per-tab navigation snapshot also stores this history. Current workspace access filters remove deleted, hidden and inaccessible entries. First visits retain the existing general/first-channel fallback, and returning to a voice/stage page uses the existing non-joining restore path. See [CHANGES_2.16.md](CHANGES_2.16.md) and [VALIDATION.md](VALIDATION.md).
+
+## Retained screenshot follow-up in 2.15.1
+
+Reproduced the latest phone failure by pairing the 2.15 viewer module with 2.14 application/styles: two close buttons, a 21-pixel title area and a full-size clipped image. The server now snapshots client JS/CSS at startup and serves them under a shared content-derived build path. HTML is not stored, old entry URLs redirect without caching, and relative module imports retain the same build prefix. A browser already primed with the broken combination recovered after a normal reload against the upgraded server. See [CHANGES_2.15.1.md](CHANGES_2.15.1.md) and [VALIDATION.md](VALIDATION.md).
+
+## Retained screenshot follow-up in 2.15
+
+The shared media viewer centers contained images, video and audio in both axes. Zoom out, Fit, Zoom in and Close have equal 44-pixel boxes. Mobile filenames and Close share the first row; zoom and the named download icon share the next. The close action stays in normal layout flow. Fit media responds directly through CSS during resizing; enlarged images retain scrollable zoom, while Fit clears the old scroll offset. Video controls stay within the stage. Playback pauses and the stage observer disconnects when leaving the viewer. See [CHANGES_2.15.md](CHANGES_2.15.md) and [VALIDATION.md](VALIDATION.md).
+
+## Retained screenshot follow-up in 2.14
+
+The Discovery title, Search and Create server now share one row, including narrow phone widths. An obsolete mobile grid rule was removed, and generic narrow conversation rules exclude Discovery. Profile badge groups are non-wrapping, with matching width/height/flex basis and consistent gaps. Display names can wrap inside their own remaining space. Public profiles, the DM profile sidebar and account preview share the fix. See [CHANGES_2.14.md](CHANGES_2.14.md) and [VALIDATION.md](VALIDATION.md).
+
+## Retained screenshot follow-up in 2.13
+
+Microphone/deafen taps play their own soft confirmation before or during calls; DND, the Sounds preference and zero volume still silence them. Floating notices keep one viewport anchor during chat/settings scrolling, with compact fallback width retained across observer callbacks. Eight additional dark palettes are available and accepted by account sync, for sixteen total. Shared tooltips cover status avatars and existing native descriptions, with live status text and keyboard access on standalone profile avatars. See [CHANGES_2.13.md](CHANGES_2.13.md) and [VALIDATION.md](VALIDATION.md).
+
+## Retained screenshot follow-up in 2.12
+
+Member names no longer repeat roles underneath; grouping and full profile roles remain. Message body line height and author separation have slightly more space. Discovery has its own name/description search with additional pages, independently of quick search. Early member awards stop at a fixed launch deadline and persist afterward. Community owner derives only from current ownership, with live transfer/deletion updates. Shared quick tooltips describe badges and named icon controls. Microphone/deafen work before joining and retain device/account choices through calls and reconnects. DMs start with a voice Call action; camera remains available inside the call. Attachment-only DM previews describe files both live and after refresh. See [CHANGES_2.12.md](CHANGES_2.12.md), [BADGES.md](BADGES.md) and [VALIDATION.md](VALIDATION.md).
+
+## Retained screenshot follow-up in 2.11
 
 Settings action rows keep deletion beside the normal actions and retain warnings in confirmation dialogs. Server/account tabs are individual buttons without long underlines or redundant subtitles/sync-status text. Narrow composers use a one-line placeholder. Editable avatar/banner previews own their controls, with hover, keyboard and touch access. Activity shows readable actions, actor/target names and specific field changes. Personal Skypixel data is applied through an explicit local import; startup/registration stay generic. The personal upgrade retains five custom roles and transfers Best Tester members to Tester. See [CHANGES_2.11.md](CHANGES_2.11.md) and [COMMUNITY_SETUP.md](COMMUNITY_SETUP.md).
 

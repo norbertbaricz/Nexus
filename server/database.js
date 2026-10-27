@@ -30,6 +30,7 @@ function openDatabase(filename) {
       icon TEXT NOT NULL DEFAULT '', banner TEXT NOT NULL DEFAULT '', accent TEXT NOT NULL DEFAULT '#f37970',
       ownerId TEXT NOT NULL REFERENCES users(id), invite TEXT NOT NULL UNIQUE, createdAt TEXT NOT NULL
     );
+    CREATE INDEX IF NOT EXISTS servers_owner ON servers(ownerId);
     CREATE TABLE IF NOT EXISTS members (
       serverId TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
       userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

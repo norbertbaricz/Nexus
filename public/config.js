@@ -12,6 +12,7 @@ export const CONFIG = Object.freeze({
   replySwipeDistance: 64, messageHoldMs: 550, gestureCancelDistance: 12, gesturePreviewDistance: 96, gestureClickSuppressMs: 400, jumpLatestDistance: 180,
   preferencesKey: 'nexus.preferences.v2',
   draftPrefix: 'nexus.draft.',
+  viewStoragePrefix: 'nexus.view.', // Per-account navigation for the current browser tab.
   maxMessageLength: 8000,
   maxUploadBytes: 5 * 1024 ** 3,
   maxProfileBytes: 5 * 1024 ** 3,
@@ -29,6 +30,9 @@ export const CONFIG = Object.freeze({
   preferenceQueuePrefix: 'nexus.sync.queue.', preferenceOwnerKey: 'nexus.sync.owner',
   settingsScrollPrefix: 'nexus.settings.scroll.',
   searchDebounceMs: 300,
+  usernameSearchMinLength: 2,
+  tooltipDelayMs: 80, tooltipGap: 10, tooltipSafeInset: 8, tooltipMaxWidth: 280,
+  audioStatePrefix: 'nexus.audio.',
   membersOverlayBreakpoint: 1280,
   discoveryRefreshMs: 15000,
   composerContextMinWidth: 320, // Keep recipient placeholders on one line in narrow composers.

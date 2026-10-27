@@ -48,7 +48,7 @@ function installLifecycle(app, ctx) {
     // Disconnect before deleting channel records so membership publication can resolve them.
     notifyConversations(removal.channels,'This server was permanently deleted.');
     transaction(db,()=>clearServer(current.id)); removeBytes(removal.files);
-    updateWorkspace(users); getIO()?.emit('discovery:updated',{}); res.json({ok:true});
+    updateWorkspace(users); ctx.refreshUserBadges([req.userId], users); getIO()?.emit('discovery:updated',{}); res.json({ok:true});
   });
   app.delete('/api/account', auth, async (req,res) => {
     limit(`account-delete:${req.userId}`,config.authAttemptsPerMinute);

@@ -63,3 +63,20 @@ test('unsupported browser audio fails gracefully without blocking the interface'
   assert.equal(await engine.unlock(), false); assert.equal(engine.play('message'), false);
   engine.stopAll();
 });
+
+test('control feedback unlocks audio before a call and can confirm deafen without silencing DND or master preferences',async()=>{
+ const {NexusSounds}=await import(moduleUrl),device=audioDevice(),settings={sounds:true,soundVolume:45};let deafened=false,dnd=false,clock=1000;
+ const engine=new NexusSounds({getSettings:()=>settings,isQuiet:()=>deafened||dnd,isFeedbackQuiet:()=>dnd,createContext:()=>device.context,now:()=>clock});
+ assert.equal(await engine.feedback('mute'),true);assert.equal(device.context.state,'running');assert.equal(device.notes[0].frequencyValue,220);
+ clock+=100;deafened=true;assert.equal(engine.play('message'),false);assert.equal(await engine.feedback('deafen'),true);assert.equal(device.notes[0].cancelled,true);assert.equal(engine.feedbackNotes.size,2);
+ clock+=100;const count=device.notes.length;dnd=true;assert.equal(await engine.feedback('undeafen'),false);assert.equal(device.notes.length,count);
+ dnd=false;settings.sounds=false;assert.equal(await engine.feedback('unmute'),false);settings.sounds=true;settings.soundVolume=0;assert.equal(await engine.feedback('unmute'),false);assert.equal(device.notes.length,count);
+ settings.soundVolume=45;clock+=100;assert.equal(await engine.feedback('undeafen'),true);assert.ok(device.levels.some(value=>value>0));
+});
+test('a later tap supersedes pending feedback and stopping sounds cancels a delayed unlock',async()=>{
+ const {NexusSounds}=await import(moduleUrl),device=audioDevice(),resumes=[];device.context.resume=()=>new Promise(resolve=>resumes.push(resolve));
+ const engine=new NexusSounds({getSettings:()=>({sounds:true,soundVolume:45}),createContext:()=>device.context});
+ const first=engine.feedback('mute'),last=engine.feedback('unmute');device.context.state='running';resumes.splice(0).forEach(resolve=>resolve());
+ assert.equal(await first,false);assert.equal(await last,true);assert.equal(device.notes.length,1);assert.equal(device.notes[0].frequencyValue,329.63);
+ device.context.state='suspended';const pending=engine.feedback('deafen');engine.stopAll();device.context.state='running';resumes.splice(0).forEach(resolve=>resolve());assert.equal(await pending,false);assert.equal(device.notes.length,1);
+});

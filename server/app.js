@@ -8,6 +8,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { openDatabase, transaction } = require('./database');
 const { changedFields } = require('./audit');
+const { createBadges } = require('./badges');
+const { installPublicAssets } = require('./public-assets');
 const { COOKIE_NAME, hashPassword, checkPassword, findSession, createSession } = require('./auth');
 const { installUploads } = require('./uploads');
 const { installLifecycle } = require('./lifecycle');
@@ -29,6 +31,7 @@ const REACTIONS = new Set(['❤️', '🔥', '🙌', '👀', '😂', '✨', '�
 const PUBLIC_USER_FIELDS = ['id', 'username', 'displayName', 'avatar', 'banner', 'bio', 'pronouns', 'accent', 'status', 'createdAt', 'avatarCrop', 'bannerCrop'];
 const SERVER_PERMISSIONS = PERMISSION_KEYS;
 const PROFILE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const USER_SEARCH_LIMITS = Object.freeze({ minimum: 2, maximum: 50, results: 20 });
 const id = prefix => `${prefix}_${randomUUID()}`;
 const now = () => new Date().toISOString();
 const room = conversationId => `conversation:${conversationId}`;
@@ -54,6 +57,7 @@ function createApp(config) {
   const app = express();
   const db = openDatabase(config.databasePath);
   const requestSecurity = createRequestSecurity(config);
+  const badges = createBadges(db, config);
   fs.mkdirSync(config.uploadPath, { recursive: true });
   // Badges use immutable account IDs; display names never grant privileges.
   let creatorId = db.prepare("SELECT value FROM app_settings WHERE key='creatorUserId'").get()?.value || '';
@@ -127,11 +131,7 @@ function createApp(config) {
     if (!row) return null;
     const user = Object.fromEntries(PUBLIC_USER_FIELDS.map(key => [key, row[key]]));
     user.avatarCrop = readCrop(row.avatarCrop); user.bannerCrop = readCrop(row.bannerCrop);
-    user.badges = [
-      ...(row.id === creatorId ? ['creator'] : []),
-      ...(db.prepare('SELECT 1 FROM servers WHERE ownerId=? LIMIT 1').get(row.id) ? ['community-owner'] : []),
-      ...db.prepare('SELECT badge FROM user_badges WHERE userId=?').all(row.id).map(item => item.badge),
-    ];
+    user.badges = badges.forUser(row.id, creatorId);
     const activity = [...activities.values()].filter(activity=>activity.userId===row.id);
     if (user.status === 'online' && activity.length && !activity.some(item=>!item.away&&Date.now()-item.at<=config.idleAfterMs)) user.status = 'idle';
     if (user.status === 'invisible' || !activeUsers.get(user.id)?.size) user.status = 'offline';
@@ -222,12 +222,19 @@ function createApp(config) {
       WHERE conversationId IN (SELECT conversationId FROM participants WHERE userId = ?)`).all(userId, userId).map(r => r.userId).concat(userId);
   }
   function updateWorkspace(users) { permissionCache.clear(); emitUsers(users, 'workspace:updated', {}); }
+  function refreshUserBadges(users, audience = []) {
+    for (const userId of new Set(users)) { const user = getUser(userId); if (user) emitUsers([...relatedUsers(userId), ...audience], 'user:updated', user); }
+  }
   function unread(conversationId, userId) {
     return db.prepare(`SELECT count(*) AS count FROM messages WHERE conversationId = ? AND authorId != ?
       AND authorId NOT IN (SELECT targetId FROM blocks WHERE ownerId=?)
       AND NOT EXISTS (SELECT 1 FROM messages root JOIN blocks b ON b.targetId=root.authorId WHERE root.id=messages.threadId AND b.ownerId=?)
       AND createdAt > COALESCE((SELECT readAt FROM reads WHERE conversationId = ? AND userId = ?), '')`)
       .get(conversationId, userId, userId, userId, conversationId, userId).count;
+  }
+  function lastMessage(conversationId) {
+    const message = db.prepare('SELECT id,text,attachments,createdAt FROM messages WHERE conversationId=? ORDER BY createdAt DESC,id DESC LIMIT 1').get(conversationId);
+    return message ? {...message,attachments:JSON.parse(message.attachments || '[]')} : null;
   }
   function hydratedMessage(message, viewerId) {
     if (!message) return null;
@@ -275,7 +282,7 @@ function createApp(config) {
     emitUsers([ownerId],'blocks:updated',{}); updateWorkspace([ownerId,targetId]);
     for (const conversationId of new Set([...first,...second].map(peer=>peer.conversationId))) publishVoice(conversationId);
   }});
-  const community = installCommunity(app, { db, config, auth, HttpError, id, now, text, member, owner, permission, hasPermission, serverUsers, refreshServerAccess, updateWorkspace, getIO: () => io, voice, leaveVoice });
+  const community = installCommunity(app, { db, config, auth, HttpError, id, now, text, member, owner, permission, hasPermission, serverUsers, refreshServerAccess, updateWorkspace, refreshUserBadges, getIO: () => io, voice, leaveVoice });
   const accountPreferences=installPreferences(app,{db,auth,HttpError,emitUsers});
   const pins=installPins(app,{db,auth,access,recipients,activeUsers,emitUsers,HttpError});
   app.get('/api/gifs', auth, (req, res) => res.json({ gifs: GIFS }));
@@ -286,7 +293,7 @@ function createApp(config) {
     const credential = createHmac('sha1',config.turnSharedSecret).update(username).digest('base64');
     return config.iceServers.map(server => [].concat(server.urls).some(url=>/^turns?:/i.test(url)) ? {...server, username, credential} : server);
   }
-  app.get('/api/health', (req, res) => res.json({ ok: true, version: '2.11.0' }));
+  app.get('/api/health', (req, res) => res.json({ ok: true, version: '2.17.0' }));
   app.get('/api/config', (req, res) => res.json({
     csrfToken: requestSecurity.issueToken(req, res),
     registrationOpen: config.registrationOpen, minPasswordLength: config.minPasswordLength, maxMessageLength: config.maxMessageLength,
@@ -319,7 +326,7 @@ function createApp(config) {
     db.prepare('INSERT INTO users (id, username, displayName, passwordHash, createdAt) VALUES (?, ?, ?, ?, ?)')
       .run(userId, username, displayName, passwordHash, now());
     if (username === config.creatorUsername && !creatorId) { creatorId = userId; db.prepare("INSERT OR REPLACE INTO app_settings VALUES ('creatorUserId',?)").run(creatorId); }
-    if (db.prepare('SELECT count(*) AS n FROM users').get().n <= 100) db.prepare("INSERT OR IGNORE INTO user_badges VALUES (?,'early-member')").run(userId);
+    badges.awardEarlyMember(userId, db.prepare('SELECT createdAt FROM users WHERE id=?').get(userId).createdAt);
     createSession(db, res, userId, config);
     res.status(201).json({ user: getUser(userId) });
   });
@@ -341,7 +348,7 @@ function createApp(config) {
     res.clearCookie(COOKIE_NAME, { path: '/', secure: config.secureCookies, httpOnly: true, sameSite: 'strict' });
     res.json({ ok: true });
   });
-  installLifecycle(app, { db, config, auth, HttpError, checkPassword, COOKIE_NAME, limit, owner, serverUsers, relatedUsers, updateWorkspace, getIO: () => io, voice, leaveVoice, onCreatorDeleted: () => { creatorId = ''; }, onAccountDeleted: userId => { social.clearCache();for(const key of recentMessages.keys())if(key.startsWith(`${userId}:`))recentMessages.delete(key); } });
+  installLifecycle(app, { db, config, auth, HttpError, checkPassword, COOKIE_NAME, limit, owner, serverUsers, relatedUsers, updateWorkspace, refreshUserBadges, getIO: () => io, voice, leaveVoice, onCreatorDeleted: () => { creatorId = ''; }, onAccountDeleted: userId => { social.clearCache();for(const key of recentMessages.keys())if(key.startsWith(`${userId}:`))recentMessages.delete(key); } });
   app.get('/api/bootstrap', auth, (req, res) => {
     const servers = db.prepare(`SELECT s.*, m.role FROM servers s JOIN members m ON m.serverId = s.id
       WHERE m.userId = ? ORDER BY s.createdAt, s.id`).all(req.userId).map(server => ({
@@ -358,7 +365,7 @@ function createApp(config) {
       JOIN participants p ON p.conversationId = c.id AND p.userId != ?
       WHERE c.id IN (SELECT conversationId FROM participants WHERE userId = ?)
       ORDER BY COALESCE((SELECT max(createdAt) FROM messages WHERE conversationId = c.id), c.createdAt) DESC`).all(req.userId, req.userId)
-      .filter(dm=>!social.pairBlocked(req.userId,dm.peerId)).map(dm => ({ ...dm, pins:pins.state(dm.id,req.userId), unread: unread(dm.id, req.userId), lastMessage: db.prepare('SELECT text, createdAt FROM messages WHERE conversationId = ? ORDER BY createdAt DESC, id DESC LIMIT 1').get(dm.id) || null }));
+      .filter(dm=>!social.pairBlocked(req.userId,dm.peerId)).map(dm => ({ ...dm, pins:pins.state(dm.id,req.userId), unread: unread(dm.id, req.userId), lastMessage: lastMessage(dm.id) }));
     const userIds = new Set([req.userId, ...servers.flatMap(s => s.members.map(m => m.userId)), ...dms.map(d => d.peerId)]);
     res.json({ user: { ...getUser(req.userId), preferredStatus: db.prepare('SELECT status FROM users WHERE id = ?').get(req.userId).status },
       accountPreferences:accountPreferences.snapshot(req.userId), blockedIds: social.ids(req.userId), servers, dms, users: [...userIds].map(getUser), voice: [...voice.values()].filter(v => {
@@ -395,9 +402,11 @@ function createApp(config) {
     res.json({ user });
   });
   app.get('/api/users', auth, (req, res) => {
-    const query = text(req.query.q || '', 50, 'Search', 2).replace(/[!%_]/g, '!$&');
-    res.json({ users: db.prepare("SELECT * FROM users WHERE id != ? AND username LIKE ? ESCAPE '!' ORDER BY username LIMIT 20")
-      .all(req.userId, `%${query}%`).filter(row=>!social.pairBlocked(req.userId,row.id)).map(publicUser) });
+    const value = req.query.q;
+    const normalized = typeof value === 'string' ? value.trim().replace(/^@/, '').trim() : value || '';
+    const query = text(normalized, USER_SEARCH_LIMITS.maximum, 'Search', USER_SEARCH_LIMITS.minimum).replace(/[!%_]/g, '!$&');
+    res.json({ users: db.prepare("SELECT * FROM users WHERE id != ? AND username LIKE ? ESCAPE '!' ORDER BY username LIMIT ?")
+      .all(req.userId, `%${query}%`, USER_SEARCH_LIMITS.results).filter(row=>!social.pairBlocked(req.userId,row.id)).map(publicUser) });
   });
   app.post('/api/servers', auth, (req, res) => {
     const name = text(req.body.name, 60, 'Server name', 2);
@@ -416,7 +425,7 @@ function createApp(config) {
     });
     community.audit(serverId,req.userId,'server.created',serverId);
     for (const c of db.prepare('SELECT id FROM channels WHERE serverId = ?').all(serverId)) joinConversationRooms(req.userId, c.id);
-    updateWorkspace([req.userId]); res.status(201).json({ id: serverId });
+    updateWorkspace([req.userId]); refreshUserBadges([req.userId]); res.status(201).json({ id: serverId });
   });
   app.patch('/api/servers/:id', auth, (req, res) => {
     permission(req.params.id, req.userId, 'manageServer');
@@ -533,14 +542,21 @@ function createApp(config) {
     community.audit(req.params.id,req.userId,'permissions.updated','','',{changes:changedFields(before,defaults)});refreshServerAccess(req.params.id);updateWorkspace(serverUsers(req.params.id));res.json({ok:true});
   });
   app.get('/api/discovery', auth, (req, res) => {
-    const servers = db.prepare(`SELECT s.ownerId, s.id, s.name, s.description, s.icon, s.banner, s.iconCrop, s.bannerCrop, s.accent, s.rules,
+    const query = text(req.query.q ?? '', config.discoveryQueryLength, 'Server search');
+    const offsetText = String(req.query.offset ?? '0'), offset = Number(offsetText);
+    if (!/^\d+$/.test(offsetText) || !Number.isSafeInteger(offset) || offset < 0 || offset > config.discoveryMaxOffset) throw new HttpError(400, 'Choose a valid discovery page.');
+    const rows = db.prepare(`SELECT s.ownerId, s.id, s.name, s.description, s.icon, s.banner, s.iconCrop, s.bannerCrop, s.accent, s.rules,
       (SELECT count(*) FROM members m WHERE m.serverId = s.id) AS memberCount,
       (SELECT count(*) FROM members candidate WHERE candidate.serverId = s.id AND candidate.userId IN
         (SELECT related.userId FROM members related WHERE related.serverId IN
           (SELECT own.serverId FROM members own WHERE own.userId = ?))) AS sharedMembers
       FROM servers s WHERE s.publicListing = 1 AND NOT EXISTS (SELECT 1 FROM moderations b WHERE b.serverId=s.id AND b.userId=? AND b.kind='ban' AND (b.expiresAt IS NULL OR b.expiresAt>?))
-      ORDER BY CASE WHEN s.id=? AND s.ownerId=? THEN 0 ELSE 1 END, sharedMembers DESC, memberCount DESC, s.createdAt DESC LIMIT ?`).all(req.userId, req.userId, Date.now(), db.prepare("SELECT value FROM app_settings WHERE key='officialServerId'").get()?.value || '', creatorId, config.discoveryPageSize).map(({ownerId, ...server}) => ({ ...server,iconCrop:readCrop(server.iconCrop),bannerCrop:readCrop(server.bannerCrop),official: isOfficial({ ...server, ownerId }), joined: Boolean(db.prepare('SELECT 1 FROM members WHERE serverId=? AND userId=?').get(server.id, req.userId)) }));
-    res.json({ servers });
+      AND (?='' OR instr(lower(s.name),lower(?))>0 OR instr(lower(s.description),lower(?))>0)
+      ORDER BY CASE WHEN s.id=? AND s.ownerId=? THEN 0 ELSE 1 END, sharedMembers DESC, memberCount DESC, s.createdAt DESC, s.id DESC LIMIT ? OFFSET ?`)
+      .all(req.userId, req.userId, Date.now(), query, query, query, db.prepare("SELECT value FROM app_settings WHERE key='officialServerId'").get()?.value || '', creatorId, config.discoveryPageSize + 1, offset);
+    const hasMore = rows.length > config.discoveryPageSize;
+    const servers = rows.slice(0, config.discoveryPageSize).map(({ownerId, ...server}) => ({ ...server,iconCrop:readCrop(server.iconCrop),bannerCrop:readCrop(server.bannerCrop),official: isOfficial({ ...server, ownerId }), joined: Boolean(db.prepare('SELECT 1 FROM members WHERE serverId=? AND userId=?').get(server.id, req.userId)) }));
+    res.json({ servers, hasMore, nextOffset: hasMore ? offset + servers.length : null });
   });
   app.post('/api/servers/:id/join-public', auth, (req, res) => {
     const server = db.prepare('SELECT id FROM servers WHERE id = ? AND publicListing = 1').get(req.params.id);
@@ -833,6 +849,8 @@ function createApp(config) {
     broadcastMessage(message.id);pins.notify(message.conversationId);res.json({ok:true,pins:pins.state(message.conversationId,req.userId)});
   });
   const closeUploads = installUploads(app, { db, config, auth, permission, HttpError, id, now, imageType, PROFILE_IMAGE_TYPES, limit, text });
+  // Search can display assigned artwork before a DM or shared server exists.
+  const assignedProfileImage = db.prepare('SELECT 1 FROM users WHERE id = ? AND (avatar = ? OR banner = ?)');
 
   app.get('/files/:id', (req, res) => {
     const session = findSession(db, req.headers.cookie);
@@ -849,7 +867,10 @@ function createApp(config) {
       const server = db.prepare('SELECT * FROM servers WHERE id = ?').get(file.serverId);
       if (!server?.publicListing || ![server.icon, server.banner].includes(`/files/${file.id}`)) member(file.serverId, session.userId);
     }
-    else if (file.purpose === 'profile' && file.ownerId !== session.userId && !relatedUsers(session.userId).includes(file.ownerId)) throw new HttpError(404, 'File not found.');
+    else if (file.purpose === 'profile' && file.ownerId !== session.userId) {
+      const url = `/files/${file.id}`;
+      if (social.pairBlocked(session.userId, file.ownerId) || !assignedProfileImage.get(file.ownerId, url, url)) throw new HttpError(404, 'File not found.');
+    }
     else if (file.purpose !== 'profile' && file.ownerId !== session.userId) {
       if (!file.conversationId) throw new HttpError(404, 'File not found.');
       access(file.conversationId, session.userId);
@@ -864,8 +885,10 @@ function createApp(config) {
     res.sendFile(path.join(config.uploadPath, file.diskName));
   });
   app.use('/api', (req, res) => res.status(404).json({ error: 'Endpoint not found.' }));
-  app.use(express.static(path.join(__dirname, '../public'), { index: 'index.html', maxAge: 0, dotfiles: 'deny' }));
-  app.get('/{*path}', (req, res) => res.sendFile(path.join(__dirname, '../public/index.html')));
+  const publicDirectory = path.join(__dirname, '../public');
+  const publicAssets = installPublicAssets(app, publicDirectory);
+  app.use(express.static(publicDirectory, { index: false, maxAge: 0, dotfiles: 'deny' }));
+  app.get('/{*path}', publicAssets.sendIndex);
   app.use((error, req, res, next) => {
     if (res.headersSent) return next(error);
     // Failed private image responses must never become a cached broken avatar.
@@ -945,7 +968,7 @@ function createApp(config) {
         if ([...voice.values()].some(v => v.userId === socket.userId)) throw new HttpError(409, 'You are already connected in another tab.');
         leaveVoice(socket);
         const stageSpeaker=conversation.type!=='stage'||hasPermission(conversation.serverId,socket.userId,'manageChannels'),canSpeak=!conversation.serverId||stageSpeaker&&hasPermission(conversation.serverId,socket.userId,'speak');
-        voice.set(socket.id, { canSpeak,stageSpeaker: conversation.type !== 'stage' || hasPermission(conversation.serverId, socket.userId, 'manageChannels'), socketId: socket.id, userId: socket.userId, conversationId: payload.conversationId, muted: !canSpeak, deafened: false, camera: false, sharing: false });
+        voice.set(socket.id, { canSpeak,stageSpeaker: conversation.type !== 'stage' || hasPermission(conversation.serverId, socket.userId, 'manageChannels'), socketId: socket.id, userId: socket.userId, conversationId: payload.conversationId, muted: !canSpeak || payload.muted === true || payload.deafened === true, deafened: payload.deafened === true, camera: false, sharing: false });
         socket.join(`voice:${payload.conversationId}`); publishVoice(payload.conversationId);
         return { peers, canSpeak,stageListener: conversation.type === 'stage' && !stageSpeaker };
       });

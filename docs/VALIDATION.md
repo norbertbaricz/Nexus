@@ -1,8 +1,109 @@
-# Nexus 2.11 validation record
+# Nexus 2.17 validation record
 
-Date: 2026-10-26
+Date: 2026-10-27
 
-## Current 2.11 checks
+## Current 2.17 checks
+
+- All **154 automated tests pass**, with no failures or skips, using the full `node --test --test-concurrency=2` suite. Syntax checks cover 36 server/test scripts and 30 browser modules. Dependencies and schema version are unchanged.
+- Five added regressions cover people-query normalization/literal escaping, first-contact profile media authorization, both block directions, safe avatar fallback and its scope. HTTP cases verify equivalent plain/@ queries, mixed case, whitespace, underscore/percent escaping, query bounds and short queries.
+- Profile-media HTTP tests use two accounts with no shared server or DM. Search returns the current avatar/banner and both image requests return the original GIF bytes. Anonymous requests return 401; profile download actions return 403. Unused profile uploads and unattached private files return 404 for the viewer. Search/image viewing leaves the viewer's DM list empty.
+- After creating a DM, unpublished profile artwork still returns 404 to the peer. Replacing an avatar makes the old unassigned file inaccessible to the peer, while the current banner and replacement remain available. Owner previews remain available. Blocking in either direction hides the person from search and makes their current profile images inaccessible to the blocked pair.
+- Actual desktop browser: a disposable KGMations QA account with no DM/server in common appeared in New message for KG, its plain username and its @username. Its avatar decoded with naturalWidth 160. Quick search also found the @username with a loaded avatar.
+- Actual desktop browser: a deliberately missing avatar URL displayed BP initials, retained the presence ring, removed the failed image node and produced no application error toast. Message/attachment image nodes are outside this handler.
+- Actual browser at 390x844 and 314x540: the @username result and loaded avatar stayed inside the dialog with no page horizontal overflow. On the final source, selecting the prefixed result created the expected DM and the new conversation header displayed the loaded avatar.
+
+Browser records and the deliberately broken image fixture are disposable and excluded from the ZIP. These are Chromium checks, not physical iPhone/Safari certification. Earlier deployment and remote-call media limitations remain below.
+
+## Retained 2.16.1 checks
+
+- All **149 automated tests pass**, with no failures or skips. Syntax checks cover 36 server/test scripts and 30 browser modules. Dependencies and schema version are unchanged.
+- Inspected the supplied phone screenshot. The voice warning was rendered inside a centered controls row without sufficient shrink/wrap constraints, and the short mobile grid left a gap below the footer.
+- Used the production moderation API to give a disposable member a real timed server mute. Actual browser measurements cover a short reason and a 300-character unbroken reason with a multi-unit duration at all 17 viewports below: 34 measurements. Every notice and its text stayed horizontally inside the voice view and viewport. There was no page/control/text horizontal overflow. Each notice remained at the bottom with a 12–24-pixel gap in the tested zero-safe-inset browser layouts.
+- At 390x844, the short warning measured 352 by 121.77 pixels at x=19 and bottom=820. Its text column measured 288 pixels wide with zero horizontal overflow; title, remaining time and Spamming reason were readable. Voice join remained unavailable.
+- Long details used the bounded internal scroller at 15 of the 17 sizes. Keyboard focus plus End reached the final 159-pixel scroll offset in a settled check, preserving the complete reason. A stage page at 390x844 measured the same bounded layout, and a muted text channel also had no horizontal overflow and no composer.
+- Actual live-state check on the final source: lifting the mute removed the notice and restored Join call. Applying a new mute removed Join call and restored the warning without navigation or reload. The microphone probe remained at zero attempts throughout. The probe only prevents microphone capture in isolated QA and is excluded from the ZIP.
+
+Test viewports: 280x640, 314x540, 390x664, 314x680, 320x480, 320x640, 375x812, 390x844, 393x852, 430x932, 600x800, 760x800, 844x390, 768x1024, 1024x768, 1366x768 and 1920x1080. These are Chromium measurements, not physical iPhone/Safari or real safe-area certification. Fixture accounts, moderation endpoints, scripts and data are excluded from the archive. Earlier remote-call and deployment limitations remain below.
+
+## Retained 2.16 checks
+
+- All **149 automated tests pass**, with no failures or skips. Syntax checks cover 36 server/test scripts and 30 browser modules. Dependencies and schema version are unchanged.
+- Four additional navigation tests exercise the actual browser helper: all six channel types, independent server histories, JSON persistence, renames/reordering, deleted/inaccessible channels, lost server membership, cross-server IDs, empty servers, first visits and malformed/legacy history.
+- Actual desktop browser: opened a QA Bob DM, then Evening club's media-gallery. Returning to Messages restored QA Bob, and selecting Evening club restored media-gallery. Open studio separately retained ideas. Repeated switching preserved both selections; a full page reload restored ideas, and Evening club still retained media-gallery afterward.
+- Actual desktop browser: selected The lounge voice page with a disposable fixture that rejects microphone capture. It recorded one attempted explicit join. After Messages -> Servers -> Evening club, The lounge was restored and the attempt count remained one. Reloading restored the same voice page with zero capture attempts in the new document. This verifies navigation without a real microphone, not remote-call media delivery.
+- Account isolation in the real browser: a second disposable account first opened general on the shared server, then selected ideas. Returning to the original account restored its own The lounge selection.
+- Actual 390x844 browser layout: selected discussions, opened QA Bob in Messages, then returned to Evening club. It restored discussions, and a full reload kept discussions selected. The sidebar/DM and channel header remained consistent.
+
+Navigation uses the current account's existing sessionStorage record in each browser tab. A first visit retains the existing default, and currently visible workspace channels determine whether a stored selection can be restored. Browser QA used isolated records and a microphone-denial fixture; none are included in the ZIP. These are Chromium checks, not physical iPhone/Safari certification. Earlier deployment and remote-call media limitations remain below.
+
+## Retained 2.15.1 checks
+
+- All **145 automated tests pass**, with no failures or skips. Syntax checks cover 36 server/test scripts and 29 browser modules. Dependencies, viewer source/layout and schema version are unchanged from 2.15.
+- Reproduced the screenshot failure in an isolated browser checkout: 2.14 app/styles plus the 2.15 viewer produced two Close dialog actions, a 21.36-pixel heading, 36-pixel controls and a 1000-pixel-wide image inside a 332-pixel-wide stage. The stage had horizontal overflow and the visible image was clipped. This establishes a reproducible mixed-version failure; the user's separate installation and cache were not directly inspected.
+- Upgraded that same checkout and reloaded the same browser tab without clearing its cache. The real application loaded its app entry and stylesheet under one shared build prefix. The viewer had one close action, a 284-pixel heading, 44-by-44-pixel phone controls, the complete 1000-by-340 source image scaled to approximately 314-by-107 pixels and zero stage overflow.
+- Actual browser after the upgrade: both a wide image and native video passed all 17 viewports below, for 34 layout measurements. Every measurement retained one Close action, bounded title/controls, 44-pixel control heights, no stage/dialog/page overflow and media-center differences under one pixel. Phone video reached readyState 4. A portrait image at 390x844 also retained its proportions and fit the stage. Zoom centered the image and Fit removed its scroll offsets/overflow. Native audio loaded with readyState 4 and no media error.
+- Five new asset-delivery tests cover coherent HTML/module paths, nested relative imports, immutable running snapshots, CSS-only upgrade invalidation, conditional GET, HEAD, MIME types, legacy redirects, stale builds, missing modules and private/traversal paths. A production integration test fetches the actual complete app module graph and stylesheet and verifies their shared build ID.
+
+Test viewports: 280x640, 314x540, 390x664, 314x680, 320x480, 320x640, 375x812, 390x844, 393x852, 430x932, 600x800, 760x800, 844x390, 768x1024, 1024x768, 1366x768 and 1920x1080. These are Chromium browser checks, including the iPhone 14 portrait dimensions; no physical iPhone/Safari test was available. QA fixtures, mixed-version reproductions, instrumentation and databases are excluded from the ZIP. Earlier deployment and remote-call limitations remain below.
+
+## Retained 2.15 checks
+
+- All **139 automated tests pass**, with no failures or skips. Syntax checks cover 34 server/test scripts and 29 browser modules. Dependencies and schema version are unchanged.
+- Three additional viewer lifecycle tests use the actual browser module: bounded image zoom, Fit scroll reset, containment across metadata/resize events, no image zoom on video, playback release, item navigation, one close action and no empty footer.
+- Inspected the supplied phone and desktop screenshots. The viewer retained conflicting historical layout rules, an absolutely placed close button and a content container whose height left media against the top. Viewer CSS is now consolidated, and the close action is part of its header layout.
+- Actual Chromium browser: wide image, portrait image, native video, native audio and a long-name/long-caption item were each measured at all 17 viewports below: 85 layout checks. Every header control stayed inside the dialog and measured 44 pixels high. Zoom out, Fit, Zoom in and Close were 44 pixels wide. Mobile Download was also square; desktop Download retained its text label. The filename did not overlap Close. No unzoomed stage/dialog/page overflow was measured, and media centers differed from stage centers by less than one pixel.
+- Fit containment remains correct during rapid viewport changes without waiting for a JavaScript resize callback. Phone filenames and Close occupy the first row; zoom/download controls occupy a dedicated second row. Desktop controls share the filename row. Native video/audio reached readyState 4, and video controls remained visible inside the contained player.
+- A portrait image zoomed from its center in the real browser. After 12 Zoom in taps from Fit, the upper zoom button disabled at 4x; the stage alone became scrollable. Fit returned both scroll offsets to zero, removed stage overflow and disabled Zoom out. Closing restored the gallery and focus to its original image button.
+- Long filenames ellipsized within the title area. Long Markdown captions retained bounded internal scrolling; measured footer height stayed at or below 124 pixels on phones and 148 pixels on desktop.
+
+Test viewports: 280x640, 314x540, 390x664, 314x680, 320x480, 320x640, 375x812, 390x844, 393x852, 430x932, 600x800, 760x800, 844x390, 768x1024, 1024x768, 1366x768 and 1920x1080. These are Chromium geometry checks, including the iPhone 14 portrait dimensions and reduced browser-content heights; they are not physical iPhone/Safari certification. Disposable records, media fixtures, QA pages and instrumentation are excluded from the archive. Earlier deployment and remote-call media limitations remain below.
+
+## Retained 2.14 checks
+
+- All **136 automated tests pass**, with no failures or skips. Syntax checks cover 34 server/test scripts and 29 browser modules. Dependencies and schema version are unchanged.
+- Inspected both supplied iPhone screenshots. The source retained an obsolete mobile grid layout for Discovery and permitted wrapping inside profile badge groups. Those rules are corrected rather than adding another action-row workaround.
+- Actual browser: the entire Discovery header was measured at every viewport below. Title and both action buttons shared the same vertical center, both buttons measured 40 pixels high, the title did not overlap Search, all buttons stayed inside the header, and there was no horizontal overflow.
+- Actual browser: a real disposable creator account had Project creator, Community owner and Early member badges. At every viewport all three stayed on one row, remained square and inside the name line, and used 6-pixel internal gaps. Name/badge centers differed by zero pixels. At 390 pixels the badges measured 26 by 26 pixels, the group measured 90 pixels wide and its gap after MaxUltimat3 measured 10 pixels.
+- The DM profile sidebar and the creator's Settings preview retained all three inline badges without horizontal overflow. The Settings preview also handled a 32-character unbroken display-name draft at 314 and 390 pixels without splitting the badge group or overflowing. The draft was discarded.
+- A visual check at 390x844 showed Discover servers, Search and Create server together on one row. Measurements also include a 314-pixel viewport close to the narrow app region in the supplied screenshot.
+
+Test viewports: 280x640, 314x680, 320x480, 320x640, 375x812, 390x844, 393x852, 430x932, 600x800, 760x800, 844x390, 768x1024, 1024x768, 1366x768 and 1920x1080. These are Chromium geometry checks, including the iPhone 14 portrait viewport dimensions; they are not physical Safari/device certification. QA routes, accounts, instrumentation and fixture databases are excluded from the ZIP. Earlier deployment/media limitations remain below.
+
+## Retained 2.13 checks
+
+- All **136 automated tests pass**, with no failures or skips. Syntax checks cover 34 server/test scripts and 29 browser modules. Dependencies and schema version remain unchanged.
+- Audio regressions verify deliberate pre-call feedback, audio unlocking, distinct deafen cues, cancellation of earlier notes, superseded pending unlocks and cancellation by Stop all. Master Sounds, zero volume and DND silence feedback. Incoming cues remain suppressed while deafened.
+- Notice regressions move control rectangles as if their container scrolled and verify identical notice geometry over repeated placement callbacks. Stack growth preserves its bottom anchor; viewport resizing clamps it. Dense layouts retain one compact width across repeated observer notifications.
+- Every palette is accepted by server preference validation. New palette IDs persist over HTTP and propagate to another authenticated Socket.IO session. All sixteen accents exceed a 7:1 contrast ratio against the button ink, and background surface lightness remains dark.
+- Status tooltip tests verify escaped display names, DND wording, keyboard focus for standalone profiles, absence of nested avatar tab stops in the user bar, live description changes and retention of the latest native title on exit.
+- Actual browser with the production audio path: the four pre-call actions Mute, Unmute, Deafen and Undeafen scheduled cumulative native oscillator counts of 1, 2, 4 and 6. The AudioContext was running and scheduled gain peaked at 0.085 at 100% volume. There was no active call. Zero-volume taps scheduled no notes, and DND taps left the note count unchanged. This confirms native scheduling, not the loudness of a physical speaker.
+- Actual browser: a held notice retained the same top/left/bottom coordinates through repeated real wheel scrolling in a DM, while history moved between the top and older/newer positions. A second notice in Appearance retained top 12, left 12 and width 294 pixels while the settings scroller moved between 0 and 801 pixels. The isolated QA harness held timers for these long checks; production dismissal timing is unchanged.
+- Notice geometry stayed inside the tested viewports and clear of the settings close button. A separate settled 320x480 check measured a 296-by-62-pixel notice at x=12, y=242.578, entirely on screen.
+- Actual browser: all sixteen palette choices rendered. Ruby applied its real accent and dark background immediately and synchronized to the second tab. The palette grid/page had no horizontal overflow across all eight sizes.
+- Actual browser: focusing the profile avatar displayed QA Bob plus Online in the shared tooltip. A real backend status update changed the already-open tooltip and avatar description to Do not disturb without reopening the profile. No Nexus application error was observed; browser-extension metadata errors were unrelated to Nexus.
+
+Test viewports: 320x480, 320x640, 390x844, 844x390, 768x1024, 1024x768, 1366x768 and 1920x1080. These are Chromium geometry checks, not physical iPhone or OS-keyboard certification. Disposable QA accounts, instrumentation, native-audio probes and notice-holding fixtures are excluded from the archive. No new remote media-delivery claim is made; the deployment limits retained below still apply.
+
+## Retained 2.12 checks
+
+- All **128 automated tests pass**, with no failures or skips. Syntax checks cover 34 server/test scripts and 29 browser modules. No dependencies were changed.
+- Badge tests verify the exact earning cutoff, eligibility beyond 100 accounts, persistence across restarts and deletion of the first account, upgrade retention of existing awards and explicit end dates. The recorded launch window cannot restart because a process restarts or its configured default changes.
+- Ownership tests verify that joining a server does not award Community owner, stale stored ownership/creator flags cannot grant derived badges, ownership transfer updates both accounts, and deletion of the final server removes the badge. Real Socket.IO sessions receive those changes.
+- Actual discovery API tests search beyond the first 24 recommendations, fetch the next page without duplicate IDs, search descriptions, treat percent signs literally, validate queries/offsets and deny unauthenticated access. Private listings and servers banning the viewer remain excluded. Client tests cover stale responses, unique appends, cancellation and recoverable errors.
+- Actual DM API tests upload a document, send it without text, retrieve its attachment metadata after refresh, delete the latest message and recover the preceding preview. Client cases cover photos, GIFs, video, audio, documents, other files, multiple attachments, escaped filenames and spoiler-name concealment.
+- Audio tests verify mute/deafen before joining, disabled microphone tracks before negotiation, the initial participant flags, retained choices between rooms and after reconnect, restoration of manual mute after undeafen, and listener restrictions without altering manual preferences. A restrictive server acknowledgement disables a stale local microphone permission before peer creation.
+- Component checks preserve role grouping and full profile roles while removing role subtitles from member rows. The DM header and compact menu have no direct-video-call action. Tooltip geometry is bounded at viewport edges.
+- Actual browser: toggling Mute and Deafen before a call updated both controls immediately. Reloading restored both selected choices for that account. No microphone or camera prompt was requested for this check.
+- Actual browser: searching Explore212 displayed 24 matching public servers, then Load more appended three additional servers for 27 total and removed the exhausted load control. A separate Skypixel search returned the existing official result. Quick search remains separate.
+- Actual browser: an attachment-only message arrived over the real Socket.IO service, displaying File plus the filename in the DM sidebar. Reloading retained the preview. No No messages yet label appeared for that sent file.
+- Actual browser: the profile badge description appeared in the shared tooltip layer on focus, measured 280 by 56 pixels and stayed within the viewport. The implementation uses the same description handler with an 80 ms hover delay. Visible icon-only buttons in the inspected server chat all had accessible labels.
+- Actual browser: member rows displayed names without role subtitles while their group headings remained present. Message body line height measured 26.4 pixels at 16-pixel text, and the author-row bottom gap measured 6 pixels. The DM header retained Call and contained no start-video action.
+- Across all eight tested sizes, the three persistent user-bar controls stayed inside the sidebar, with 4-pixel gaps and 40-pixel height. Phone buttons measured 40 pixels wide; desktop buttons measured 34 pixels wide. There was no horizontal page overflow.
+- Across all eight tested sizes, Discovery Search and Create server shared one row with matching 40-pixel heights. The search dialog, input and result grid stayed inside the viewport with no horizontal content/grid overflow.
+
+Test viewports: 320x480, 320x640, 390x844, 844x390, 768x1024, 1024x768, 1366x768 and 1920x1080. These are Chromium geometry checks, not physical iPhone or OS-keyboard certification. Media transport was not changed or newly certified by this release; the real-network HTTPS/TURN and physical-device limits recorded below remain. All browser accounts, routes, files and instrumentation used for QA are disposable and excluded from the archive.
+
+## Retained 2.11 checks
 
 - All **113 automated tests pass**, with no skips or failures. Syntax checks cover 32 server/test scripts and 26 browser modules.
 - HTTP/Socket.IO integration checks verify meaningful activity metadata for server and channel edits, deleted channel names, layout changes, access changes and actor identity. Entries render readable action labels and escaped before/after values. Older entries receive readable labels without invented historical detail.

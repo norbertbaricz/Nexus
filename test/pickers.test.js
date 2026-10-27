@@ -28,7 +28,7 @@ test('GIF trending, provider failure, empty results and cancellation are explici
 });
 test('appearance palettes keep dark surface lightness and update all shared tokens',async()=>{
   const {PALETTES,paletteTokens,applyPalette}=await import(moduleURL('appearance.js'));
-  assert.equal(Object.keys(PALETTES).length,8);
+  assert.equal(Object.keys(PALETTES).length,16);
   for(const key of Object.keys(PALETTES)){
     const tokens=paletteTokens(key);assert.match(tokens['--bg'],/7%/);assert.match(tokens['--surface'],/14%/);assert.ok(tokens['--accent-text']);assert.ok(tokens['--input']);assert.ok(tokens['--elevated']);
   }

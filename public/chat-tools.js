@@ -15,6 +15,7 @@ export const CHANNEL_ICONS = ['', 'hash', 'voice', 'megaphone', 'chat', 'image',
 export const isForum = channel => channel?.type === 'forum';
 export const isCollection = channel => channel?.type === 'media';
 export const isVoice = channel => ['voice', 'stage'].includes(channel?.type);
+export function normalizeUsernameQuery(value) { return typeof value === 'string' ? value.trim().replace(/^@/, '').trim() : ''; }
 export function mentionMatch(input) { return input.value.slice(0, input.selectionStart).match(/(?:^|\s)@([a-z0-9_.]*)$/i); }
 export function groupMessage(previous, current) {
   if (!previous || !current || previous.authorId !== current.authorId || current.replyTo) return false;

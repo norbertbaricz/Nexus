@@ -966,3 +966,143 @@ test('activity records specific server, channel and layout changes with actor na
  instance.db.prepare('INSERT INTO audit_log(id,serverId,actorId,action,createdAt) VALUES (?,?,?,?,?)').run('audit_legacy_fixture',made,host.id,'server.updated','2026-10-26T00:00:00Z');
  assert.deepEqual((await api(`/api/servers/${made}/audit`,{cookie:host.cookie})).data.entries.find(entry=>entry.id==='audit_legacy_fixture').metadata,{});
 });
+
+test('public discovery searches beyond the recommendation page and excludes hidden and banned servers',async()=>{
+ const host=await register('discovery212_host'),viewer=await register('discovery212_viewer');
+ for(let index=0;index<28;index++){
+  const id=`s_discovery212_${String(index).padStart(2,'0')}`;
+  instance.db.prepare('INSERT INTO servers(id,name,description,ownerId,invite,createdAt,publicListing) VALUES(?,?,?,?,?,?,?)').run(id,`Search212 ${index}`,index===0?'A satellite needle description':'A public search fixture',host.id,`invite212_${index}`,'2026-10-26T12:00:00Z',index===26?0:1);
+  instance.db.prepare('INSERT INTO members VALUES(?,?,?,?)').run(id,host.id,'owner','2026-10-26T12:00:00Z');
+ }
+ instance.db.prepare("INSERT INTO moderations VALUES(?,?, 'ban',NULL,'Fixture',?)").run('s_discovery212_27',viewer.id,host.id);
+ const first=await api('/api/discovery?q=search212',{cookie:viewer.cookie});assert.equal(first.status,200);assert.equal(first.data.servers.length,24);assert.equal(first.data.hasMore,true);
+ assert.ok(first.data.servers.every(server=>!server.joined&&!server.invite&&!server.ownerId));
+ const second=(await api(`/api/discovery?q=search212&offset=${first.data.nextOffset}`,{cookie:viewer.cookie})).data;
+ assert.equal(second.servers.length,2);assert.equal(second.hasMore,false);assert.equal(second.nextOffset,null);assert.equal(new Set([...first.data.servers,...second.servers].map(server=>server.id)).size,26);
+ assert.deepEqual((await api('/api/discovery?q=satellite%20needle',{cookie:viewer.cookie})).data.servers.map(server=>server.id),['s_discovery212_00']);
+ assert.equal((await api('/api/discovery?q=%25',{cookie:viewer.cookie})).data.servers.length,0);
+ assert.equal((await api('/api/discovery?offset=-1',{cookie:viewer.cookie})).status,400);assert.equal((await api(`/api/discovery?q=${'x'.repeat(81)}`,{cookie:viewer.cookie})).status,400);
+ assert.equal((await api('/api/discovery?q=search212')).status,401);
+});
+test('community badges do not follow joining, update live on transfer and disappear after the last server is deleted',async()=>{
+ const host=await register('badge212_host'),peer=await register('badge212_peer');const id=(await api('/api/servers',{cookie:host.cookie,method:'POST',body:{name:'Badge ownership fixture'}})).data.id;
+ const invite=(await api('/api/bootstrap',{cookie:host.cookie})).data.servers.find(server=>server.id===id).invite;
+ await api('/api/servers/join',{cookie:peer.cookie,method:'POST',body:{invite}});
+ const snap=(await api('/api/bootstrap',{cookie:peer.cookie})).data;assert.ok(!snap.user.badges.includes('community-owner'));assert.ok(snap.users.find(user=>user.id===host.id).badges.includes('community-owner'));
+ instance.db.prepare("INSERT INTO user_badges VALUES(?,'community-owner')").run(peer.id);
+ assert.ok(!(await api('/api/bootstrap',{cookie:peer.cookie})).data.user.badges.includes('community-owner'));
+ const socket=await connect(peer.cookie),changed=socket.wait('user:updated',user=>user.id===peer.id&&user.badges.includes('community-owner'));
+ assert.equal((await api(`/api/servers/${id}/transfer`,{cookie:host.cookie,method:'POST',body:{userId:peer.id}})).status,200);await changed;
+ assert.ok(!(await api('/api/bootstrap',{cookie:host.cookie})).data.user.badges.includes('community-owner'));
+ const removed=socket.wait('user:updated',user=>user.id===peer.id&&!user.badges.includes('community-owner'));
+ assert.equal((await api(`/api/servers/${id}`,{cookie:peer.cookie,method:'DELETE',body:{confirmName:'Badge ownership fixture'}})).status,200);await removed;
+ assert.ok(!(await api('/api/bootstrap',{cookie:peer.cookie})).data.user.badges.includes('community-owner'));
+});
+test('attachment-only DMs keep file metadata after refresh and fall back to the previous message after deletion',async()=>{
+ const a=await register('preview212_one'),b=await register('preview212_two');const dm=(await api('/api/dms',{cookie:a.cookie,method:'POST',body:{userId:b.id}})).data.id;
+ const previous=(await api(`/api/conversations/${dm}/messages`,{cookie:a.cookie,method:'POST',body:{text:'Earlier context'}})).data.message;
+ const form=new FormData();form.append('files',new Blob(['A real saved document'],{type:'text/plain'}),'notes.txt');
+ const file=(await api('/api/uploads',{cookie:a.cookie,method:'POST',body:form})).data.files[0];
+ const message=(await api(`/api/conversations/${dm}/messages`,{cookie:a.cookie,method:'POST',body:{attachments:[file.id]}})).data.message;
+ const snapshot=(await api('/api/bootstrap',{cookie:b.cookie})).data.dms.find(item=>item.id===dm).lastMessage;
+ assert.equal(snapshot.id,message.id);assert.equal(snapshot.text,'');assert.equal(snapshot.attachments[0].name,'notes.txt');assert.equal(snapshot.attachments[0].type,message.attachments[0].type);
+ assert.equal((await api(`/api/messages/${message.id}`,{cookie:a.cookie,method:'DELETE'})).status,200);
+ assert.equal((await api('/api/bootstrap',{cookie:b.cookie})).data.dms.find(item=>item.id===dm).lastMessage.id,previous.id);
+});
+test('voice arrival advertises preselected mute and deafen from the first participant state',async()=>{
+ const host=await register('audio212_host');const server=(await api('/api/servers',{cookie:host.cookie,method:'POST',body:{name:'Audio entry fixture'}})).data.id;
+ const channel=(await api('/api/bootstrap',{cookie:host.cookie})).data.servers.find(item=>item.id===server).channels.find(channel=>channel.type==='voice');
+ const socket=await connect(host.cookie);const arrival=socket.wait('voice:state',state=>state.participants.some(peer=>peer.userId===host.id));
+ assert.equal((await socket.emit('voice:join',{conversationId:channel.id,muted:true,deafened:true})).ok,true);
+ const peer=(await arrival).participants.find(peer=>peer.userId===host.id);assert.equal(peer.muted,true);assert.equal(peer.deafened,true);
+ assert.ok(socket.events.filter(event=>event.event==='voice:state').every(event=>event.payload.participants.filter(peer=>peer.userId===host.id).every(peer=>peer.muted&&peer.deafened)));
+ await socket.emit('voice:leave');
+});
+
+test('new interface palettes persist and synchronize between authenticated sessions',async()=>{
+ const user=await register('palettes213'),second=(await api('/api/auth/login',{method:'POST',body:{username:user.username,password:PASSWORD}})).cookie,observer=await connect(second);
+ for(const palette of ['ruby','ember','citrus','mint','arctic','indigo','plum','sand']){
+  const event=observer.wait('preferences:updated',snapshot=>snapshot.preferences.palette===palette);
+  assert.equal((await api('/api/preferences',{cookie:user.cookie,method:'PATCH',body:{preferences:{palette}}})).status,200);await event;
+  assert.equal((await api('/api/preferences',{cookie:second})).data.preferences.palette,palette);
+ }
+});
+
+test('the production page serves matching CSS and its complete native module graph after upgrades', async () => {
+ const page=await fetch(base+'/'),html=await page.text(),buildId=page.headers.get('x-nexus-build');
+ assert.equal(page.headers.get('cache-control'),'no-store');assert.match(buildId,/^[a-f0-9]{20}$/);
+ const prefix=`/client/${buildId}/`,entry=html.match(/<script type="module" src="([^"]+)"/)[1],style=html.match(/rel="stylesheet" href="([^"]+)"/)[1];
+ assert.equal(entry,prefix+'app.js');assert.equal(style,prefix+'styles.css');
+ const stylesheet=await fetch(base+style);assert.equal(stylesheet.status,200);assert.equal(stylesheet.headers.get('x-nexus-build'),buildId);
+ assert.ok((await stylesheet.text()).includes('.viewer-close'));
+ const queue=[new URL(entry,base).href],seen=new Set();
+ while(queue.length){
+  const url=queue.shift();if(seen.has(url))continue;seen.add(url);
+  const response=await fetch(url);assert.equal(response.status,200,url);assert.equal(response.headers.get('x-nexus-build'),buildId);
+  const source=await response.text();
+  for(const match of source.matchAll(/(?:from\s*|import\s*)['"](\.[^'"]+\.js)['"]/g)){
+   const dependency=new URL(match[1],url);assert.ok(dependency.pathname.startsWith(prefix));queue.push(dependency.href);
+  }
+ }
+ assert.ok(seen.size>=25,'The real app module graph must be covered, including the media viewer.');
+ assert.ok(seen.has(base+prefix+'image-viewer.js'));assert.ok(seen.has(base+prefix+'config.js'));
+});
+
+test('people search treats usernames and @usernames alike while preserving literal wildcard searches',async()=>{
+ const viewer=await register('search_217_viewer'),target=await register('search_217_literal');await register('searcha217aliteral');
+ for(const query of ['search_217_lit','@search_217_lit','  @SEARCH_217_LIT  ']){
+  const result=await api('/api/users?'+new URLSearchParams({q:query}),{cookie:viewer.cookie});assert.equal(result.status,200);
+  assert.deepEqual(result.data.users.map(user=>user.id),[target.id]);
+ }
+ assert.deepEqual((await api('/api/users?'+new URLSearchParams({q:'@search_217'}),{cookie:viewer.cookie})).data.users.map(user=>user.id),[target.id]);
+ assert.deepEqual((await api('/api/users?'+new URLSearchParams({q:'@search%217'}),{cookie:viewer.cookie})).data.users,[]);
+ assert.equal((await api('/api/users?'+new URLSearchParams({q:'@'+'x'.repeat(50)}),{cookie:viewer.cookie})).status,200);
+ assert.equal((await api('/api/users?'+new URLSearchParams({q:'x'.repeat(51)}),{cookie:viewer.cookie})).status,400);
+ assert.equal((await api('/api/users?'+new URLSearchParams({q:'@a'}),{cookie:viewer.cookie})).status,400);
+});
+
+test('unrelated search results can display current profile artwork without exposing drafts or private attachments',async()=>{
+ const owner=await register('profile_217_owner'),viewer=await register('profile_217_viewer');
+ const bytes=Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==','base64');
+ async function upload(name,purpose='profile'){
+  const form=new FormData();form.append('files',new Blob([bytes],{type:'image/gif'}),name);
+  const result=await api('/api/uploads?purpose='+purpose,{cookie:owner.cookie,method:'POST',body:form});assert.equal(result.status,201);return result.data.files[0];
+ }
+ const avatar=await upload('avatar.gif'),banner=await upload('banner.gif'),draft=await upload('draft.gif'),privateFile=await upload('private.gif','attachment');
+ assert.equal((await api('/api/profile',{cookie:owner.cookie,method:'PATCH',body:{avatar:avatar.url,banner:banner.url}})).status,200);
+ const snapshot=(await api('/api/bootstrap',{cookie:viewer.cookie})).data;assert.equal(snapshot.dms.length,0);assert.equal(snapshot.servers.length,0);assert.ok(!snapshot.users.some(user=>user.id===owner.id));
+ const found=(await api('/api/users?'+new URLSearchParams({q:'@profile_217_owner'}),{cookie:viewer.cookie})).data.users[0];
+ assert.equal(found.id,owner.id);assert.equal(found.avatar,avatar.url);assert.equal(found.banner,banner.url);
+ for(const url of [found.avatar,found.banner]){
+  const image=await fetch(base+url,{headers:{Cookie:viewer.cookie}});assert.equal(image.status,200);assert.match(image.headers.get('content-type'),/image\/gif/);assert.equal(image.headers.get('cache-control'),'private, no-store');
+  assert.deepEqual(Buffer.from(await image.arrayBuffer()),bytes);assert.equal((await fetch(base+url)).status,401);
+  assert.equal((await fetch(base+url+'?download=1',{headers:{Cookie:viewer.cookie}})).status,403);
+ }
+ assert.equal((await fetch(base+draft.url,{headers:{Cookie:viewer.cookie}})).status,404);
+ assert.equal((await fetch(base+privateFile.url,{headers:{Cookie:viewer.cookie}})).status,404);
+ assert.equal((await fetch(base+draft.url,{headers:{Cookie:owner.cookie}})).status,200);
+ assert.equal((await api('/api/bootstrap',{cookie:viewer.cookie})).data.dms.length,0);
+ await api('/api/dms',{cookie:viewer.cookie,method:'POST',body:{userId:owner.id}});
+ assert.equal((await fetch(base+draft.url,{headers:{Cookie:viewer.cookie}})).status,404);
+ await api('/api/profile',{cookie:owner.cookie,method:'PATCH',body:{avatar:draft.url}});
+ assert.equal((await fetch(base+avatar.url,{headers:{Cookie:viewer.cookie}})).status,404);
+ assert.equal((await fetch(base+banner.url,{headers:{Cookie:viewer.cookie}})).status,200);
+ assert.equal((await fetch(base+draft.url,{headers:{Cookie:viewer.cookie}})).status,200);
+});
+
+test('blocking in either direction hides current profile images as well as people search results',async()=>{
+ const owner=await register('image_217_owner'),viewer=await register('image_217_viewer');
+ const form=new FormData();form.append('files',new Blob([Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==','base64')],{type:'image/gif'}),'avatar.gif');
+ const image=(await api('/api/uploads?purpose=profile',{cookie:owner.cookie,method:'POST',body:form})).data.files[0];
+ await api('/api/profile',{cookie:owner.cookie,method:'PATCH',body:{avatar:image.url,banner:image.url}});
+ assert.equal((await fetch(base+image.url,{headers:{Cookie:viewer.cookie}})).status,200);
+ await api('/api/blocks/'+owner.id,{cookie:viewer.cookie,method:'PUT',body:{}});
+ assert.equal((await fetch(base+image.url,{headers:{Cookie:viewer.cookie}})).status,404);
+ assert.deepEqual((await api('/api/users?q=@image_217_owner',{cookie:viewer.cookie})).data.users,[]);
+ await api('/api/blocks/'+owner.id,{cookie:viewer.cookie,method:'DELETE'});
+ assert.equal((await fetch(base+image.url,{headers:{Cookie:viewer.cookie}})).status,200);
+ await api('/api/blocks/'+viewer.id,{cookie:owner.cookie,method:'PUT',body:{}});
+ assert.equal((await fetch(base+image.url,{headers:{Cookie:viewer.cookie}})).status,404);
+ assert.deepEqual((await api('/api/users?q=@image_217_owner',{cookie:viewer.cookie})).data.users,[]);
+ assert.equal((await fetch(base+image.url,{headers:{Cookie:owner.cookie}})).status,200);
+});

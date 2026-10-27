@@ -1,5 +1,7 @@
 import { auditEntryMarkup } from './audit.js';
-import { CHAT_CONFIG, CHANNEL_TYPES, isVoice, isForum, isCollection, mentionMatch, uploadFile } from './chat-tools.js';
+import { DiscoverySearch } from './discovery.js';
+import { Tooltips } from './tooltips.js';
+import { CHAT_CONFIG, CHANNEL_TYPES, isVoice, isForum, isCollection, mentionMatch, uploadFile, normalizeUsernameQuery } from './chat-tools.js';
 import { activeTimeout, remainingTime } from './moderation.js';
 import { CONFIG } from './config.js';
 import { syncMarkup } from './dom.js';
@@ -11,6 +13,7 @@ import { ArtworkEditor, cropStyle, readCrop } from './artwork.js';
 import { SelectMenus } from './select-menus.js';
 import { orderedRoles } from './role-display.js';
 import { SidebarResize } from './layout.js';
+import { validChannelHistory, lastServerChannel } from './navigation.js';
 import { ImageViewer } from './image-viewer.js';
 import { applyPalette } from './appearance.js';
 import { emojiPicker, emojiGrid, EMOJI_CATEGORIES, searchGiphy } from './pickers.js';
@@ -29,7 +32,7 @@ const readLocal = (key, fallback) => { try { return JSON.parse(localStorage.getI
 let preferences = { ...DEFAULT_PREFERENCES, ...readLocal(CONFIG.preferencesKey, {}) };
 let state = {
   user: null, users: [], blockedIds: [], servers: [], dms: [], voice: [], config: { ...CONFIG },
-  forumLayout:preferences.forumLayout, revealedSpoilers:new Set(), collectionLayout: preferences.mediaLayout, lastDM: null, activeThread: null, historyWindow: false, pins: [], collapsedCategories: preferences.collapsedCategories, activeServer: null, activeConv: null, view: 'home', homeTab: 'inbox', messages: [], hasMore: false,
+  forumLayout:preferences.forumLayout, revealedSpoilers:new Set(), collectionLayout: preferences.mediaLayout, lastDM: null, lastChannels: {}, activeThread: null, historyWindow: false, pins: [], collapsedCategories: preferences.collapsedCategories, activeServer: null, activeConv: null, view: 'home', homeTab: 'inbox', messages: [], hasMore: false,
   loadingMessages: false, discovery: [], discoveryLoading: false, discoveryError: false, mediaFocus: null, audioBlocked: false, connected: false, sending: false, pending: [], replyTo: null,
 };
 let socket = null;
@@ -75,8 +78,6 @@ let roleDraft = null;
 let serverMemberId = null;
 let discoveryUpdatedAt = 0;
 let previousCallId = null;
-let previousMuteState = false;
-let previousDeafenState = false;
 let settingsTab = 'profile';
 let incomingCall = null;
 let searchResults = [];
@@ -92,15 +93,18 @@ const call = new NexusCall({
     return !server || (channel.type!=='stage'||UI.hasServerPermission(server,'manageChannels')) && (channel.allowMedia!==false||UI.hasServerPermission(server,'manageChannels')) && UI.hasServerPermission(server,kind==='screen'?'shareScreen':'useVideo');
   },
   getCanSpeak:conversationId=>{const server=state.servers.find(server=>server.channels.some(channel=>channel.id===conversationId)),channel=server?.channels.find(channel=>channel.id===conversationId);return !server||UI.hasServerPermission(server,'speak')&&(channel.type!=='stage'||UI.hasServerPermission(server,'manageChannels'));},
+  onAudioState:value=>{if(state.user)try{localStorage.setItem(`${CONFIG.audioStatePrefix}${state.user.id}`,JSON.stringify(value));}catch{/* Device choices can work without storage. */}},
   getPeerAllowed:userId=>!state.blockedIds.includes(userId),onChange:()=>renderCall(),onIncoming:payload=>showIncomingCall(payload),onError:message=>toast(message,true)
 });
-const sounds = new NexusSounds({ getSettings: () => preferences, isQuiet: () => call.deafened || state.user?.preferredStatus === 'dnd' || state.user?.status === 'dnd' });
+const sounds = new NexusSounds({ getSettings: () => preferences, isQuiet: () => call.deafened || state.user?.preferredStatus === 'dnd' || state.user?.status === 'dnd', isFeedbackQuiet: () => state.user?.preferredStatus === 'dnd' || state.user?.status === 'dnd' });
 const mediaView = new NexusMediaView({ getState: () => ({ ...state, socketId: socket?.id }), getCall: () => call, getSocketId: () => socket?.id, getRoot: () => $('#main'), getMediaRoot: () => $('#media-root'), onPlaybackBlocked: blocked => { state.audioBlocked = blocked; if (state.view === 'voice') mediaView.update(); } });
 const panels=new SidebarResize({getPreferences:()=>preferences,onSave:()=>savePreferences()});
 const imageViewer=new ImageViewer({getState:()=>state,showModal,request,toast,escape:e,canDownload:file=>UI.canDownload(state,file)});
 const notices=new Notices($('#toasts'));
 const artworkEditor=new ArtworkEditor();
 const selectMenus=new SelectMenus($('#modal-root'));
+const tooltips=new Tooltips();
+const discoverySearch=new DiscoverySearch({request,onChange:()=>{if(modalType==='search:discovery')syncMarkup($('#search-results'),UI.discoverySearchMarkup(discoverySearch));}});
 const chatScroll=new ChatScroll({getFollow:()=>followChat,setFollow:value=>{followChat=value;if(value)unreadBelow=0;},getHistory:()=>state.historyWindow,motion:()=>preferences.motion!==false&&!window.matchMedia('(prefers-reduced-motion: reduce)').matches,onChange:()=>{updateScrollButton();if(followChat&&!state.historyWindow&&!state.loadingMessages&&!document.hidden&&state.view==='chat'&&UI.activeConversation(state)?.unread)markRead(state.activeConv);}});
 const preferenceSync=new PreferenceSync({request,onApply:values=>{Object.assign(preferences,values);persistLocalPreferences();applyPreferences();refreshSettingsControls();},onStatus:()=>{}});
 
@@ -162,7 +166,7 @@ async function request(endpoint, options = {}, refreshSource = true) {
 function messageForUI(id) {return state.messages.find(message=>message.id===id)||(state.activeThread?.id===id?state.activeThread:null)||state.pins.find(message=>message.id===id);}
 function userFor(id) { return state.users.find(u => u.id === id) || { id, displayName: 'Nexus user', username: 'user', accent: '#b9a1f0' }; }
 function rememberView() {
-  try { sessionStorage.setItem(`nexus.view.${state.user.id}`, JSON.stringify({ server: state.activeServer, conversation: state.activeConv, view: state.view, homeTab: state.homeTab, lastDM: state.lastDM })); } catch { /* Navigation can work without persistence. */ }
+  try { sessionStorage.setItem(`${CONFIG.viewStoragePrefix}${state.user.id}`, JSON.stringify({ server: state.activeServer, conversation: state.activeConv, view: state.view, homeTab: state.homeTab, lastDM: state.lastDM, lastChannels: state.lastChannels })); } catch { /* Navigation can work without persistence. */ }
 }
 function setMarkup(node, html) {
   syncMarkup(node,html);
@@ -214,27 +218,35 @@ function refreshWorkspace() {
     const before=signature();
     const result = await request('/api/bootstrap');
     Object.assign(state, result);
+    const history = validChannelHistory(state.servers, state.lastChannels);
+    const historyChanged = Object.keys(state.lastChannels).some(id => history[id] !== state.lastChannels[id]);
+    state.lastChannels = history;
     preferenceSync.attach(state.user.id,result.accountPreferences,preferences);
     const policyChanged=before!==signature();
+    if(policyChanged&&state.activeConv&&state.view==='voice')mediaView.update();
     if(policyChanged&&state.activeConv&&state.view==='chat'){if(modalType==='collection-upload'&&(!UI.canWrite(state)||!UI.hasServerPermission(UI.currentServer(state),'attachFiles')))closeModal(true,true);renderMain({preservePosition:true});const download=$('[data-action=viewer-download]');if(download)download.hidden=!UI.canDownload(state,imageViewer.items[imageViewer.index]);}
     if (state.activeConv && !state.servers.flatMap(server => server.channels).concat(state.dms).some(conversation => conversation.id === state.activeConv)) {
       ++messageRevision; state.activeConv = null; state.view = 'home'; state.messages = []; state.pending = []; state.replyTo = null;
       if (!state.servers.some(server => server.id === state.activeServer)) state.activeServer = null;
       renderMain();
     }
+    if (historyChanged) rememberView();
     renderChrome();
   });
   workspaceQueue = task;
   return task;
 }
 async function loadWorkspace() {
+  state.lastChannels = {};
   state.config = await request('/api/config');
   await refreshWorkspace();
+  call.setAudioState(readLocal(`${CONFIG.audioStatePrefix}${state.user.id}`,{}));
   state.connected = false;
   $('#auth-screen')?.remove();
   $('#app').inert = false; $('#app').removeAttribute('aria-hidden');
   let previous;
-  try { previous = JSON.parse(sessionStorage.getItem(`nexus.view.${state.user.id}`)); } catch { /* Begin at the default channel. */ }
+  try { previous = JSON.parse(sessionStorage.getItem(`${CONFIG.viewStoragePrefix}${state.user.id}`)); } catch { /* Begin at the default channel. */ }
+  state.lastChannels = validChannelHistory(state.servers, previous?.lastChannels);
   state.lastDM = state.dms.some(dm => dm.id === previous?.lastDM) ? previous.lastDM : null;
   if (previous?.homeTab === 'spaces' || previous?.homeTab === 'inbox') state.homeTab = previous.homeTab;
   const conversations = state.servers.flatMap(s => s.channels).concat(state.dms);
@@ -314,14 +326,15 @@ async function connectRealtime() {
       dm.lastMessage = message;
       state.dms = [dm, ...state.dms.filter(d => d !== dm)];
       if (preferences.notifications && state.user.preferredStatus !== 'dnd' && message.authorId !== state.user?.id && (document.hidden || state.activeConv !== dm.id) && 'Notification' in window && Notification.permission === 'granted') {
-        const notification = new Notification(`${userFor(message.authorId).displayName} · Nexus`, { body: message.text.slice(0, 120) || 'Sent an attachment', tag: dm.id });
+        const notification = new Notification(`${userFor(message.authorId).displayName} · Nexus`, { body: UI.messagePreview(message).slice(0,120), tag: dm.id });
         notification.onclick = () => { window.focus(); selectConversation(dm.id); notification.close(); };
       }
     }
     renderChrome();
   });
-  socket.on('message:updated', message => { if(!state.blockedIds.includes(message.authorId))upsertMessage(message); });
+  socket.on('message:updated', message => { if(!state.blockedIds.includes(message.authorId)){const dm=state.dms.find(dm=>dm.id===message.conversationId);if(dm?.lastMessage?.id===message.id){dm.lastMessage=message;renderChrome();}upsertMessage(message);} });
   socket.on('message:deleted', payload => {
+    if(state.dms.some(dm=>dm.id===payload.conversationId&&dm.lastMessage?.id===payload.id))refreshWorkspace().catch(error=>toast(error.message,true));
     if (payload.conversationId === state.activeConv && state.activeThread?.id===payload.id) {state.activeThread=null;loadMessages(state.activeConv).then(()=>renderMain({bottom:true}));}
     if (payload.conversationId === state.activeConv) { state.messages = state.messages.filter(m => m.id !== payload.id); state.pins = state.pins.filter(m => m.id !== payload.id); refreshPinButton(); renderMessages(); }
   });
@@ -372,6 +385,7 @@ async function selectConversation(conversationId, {autoJoin=true} = {}) {
   ++messageRevision;
   state.activeConv = conversationId; state.activeServer = channel?.serverId || null;
   state.homeTab = dm ? 'inbox' : 'spaces'; if (dm) state.lastDM = conversationId;
+  if (channel) state.lastChannels[channel.serverId] = channel.id;
   state.activeThread = null;state.revealedSpoilers.clear(); state.historyWindow=false; state.pins = []; followChat = true; unreadBelow = 0;
   state.view = isVoice(channel) ? 'voice' : 'chat';
   state.messages = []; state.hasMore = false; state.replyTo = null; clearPending(); typingUsers.clear();
@@ -398,9 +412,9 @@ async function loadMessages(conversationId, quiet = false) {
 function selectServer(serverId) {
   const server = state.servers.find(v => v.id === serverId);
   if (!server) return;
-  const c = server.channels.find(c => c.name === 'general') || server.channels[0];
+  const c = lastServerChannel(server, state.lastChannels);
   if (c) return selectConversation(c.id,{autoJoin:false});
-  state.activeServer = serverId; state.activeConv = null; state.view = 'home'; renderAll();
+  state.activeServer = serverId; state.activeThread = null; state.homeTab = 'spaces'; selectHome(true);
 }
 function selectHome(keepServer = false) {
   if (!keepServer && state.homeTab === 'inbox' && state.lastDM && state.dms.some(dm => dm.id === state.lastDM)) return selectConversation(state.lastDM);
@@ -485,7 +499,8 @@ function renderTyping() {
 }
 setInterval(renderTyping, 1500);
 function showModal(content, { type = 'generic', wide = false, profile = false } = {}) {
-  dismissConfirmation();closePopover();
+  dismissConfirmation();closePopover();tooltips.hide();
+  if(modalType==='image-viewer'&&type!==modalType)imageViewer.close();
   if(modalType==='server-settings'&&$('#server-settings-page'))serverSettingsScroll.set(serverSettingsTab,$('#server-settings-page').scrollTop);
   if (modalType !== type) modalDirty = false;
   $('#app').inert = true; $('#app').setAttribute('aria-hidden', 'true');
@@ -498,7 +513,7 @@ function showModal(content, { type = 'generic', wide = false, profile = false } 
     existing.querySelector('.modal-content').innerHTML = content;
     existing.querySelector('.modal-content').scrollTop = 0;
   } else {
-    $('#modal-root').innerHTML = `<div class="modal-overlay"><section class="modal ${wide ? 'wide' : ''} ${profile ? 'profile-modal' : ''} ${['settings', 'server-settings'].includes(type) ? 'settings-dialog' : ''}" data-modal-type="${e(type)}" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="modal-title"><button class="icon-button modal-close" data-action="close-modal" aria-label="Close dialog">${icon('close', 18)}</button><div class="modal-drag-handle" aria-hidden="true"><span></span></div><div class="modal-content">${content}</div></section></div>`;
+    $('#modal-root').innerHTML = `<div class="modal-overlay"><section class="modal ${wide ? 'wide' : ''} ${profile ? 'profile-modal' : ''} ${['settings', 'server-settings'].includes(type) ? 'settings-dialog' : ''}" data-modal-type="${e(type)}" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="modal-title">${type==='image-viewer'?'':`<button class="icon-button modal-close" data-action="close-modal" aria-label="Close dialog">${icon('close', 18)}</button>`}<div class="modal-drag-handle" aria-hidden="true"><span></span></div><div class="modal-content">${content}</div></section></div>`;
   }
   modalType = type;
   if(type==='server-rules'&&window.innerWidth<=CONFIG.mobileBreakpoint)$('#modal-root .rules-sections')?.removeAttribute('open');
@@ -516,7 +531,8 @@ function closeModal(keepCall = false, force = false) {
   selectMenus.close();
   modalDirty = false; profileDirty=false;serverGeneralDirty=false;serverPoliciesDirty=false;roleDirty=false;memberRoleDrafts={};
   if (modalType === 'incoming') { sounds.stopRing(); if(keepCall)incomingCall = null; }
-  $('#modal-root').innerHTML = ''; modalType = ''; ++searchRevision;
+  if (modalType === 'image-viewer') imageViewer.close();
+  $('#modal-root').innerHTML = ''; modalType = ''; ++searchRevision; discoverySearch.cancel();tooltips.hide();
   const authenticating = Boolean($('#auth-screen')); $('#app').inert = authenticating;
   if (authenticating) $('#app').setAttribute('aria-hidden', 'true'); else $('#app').removeAttribute('aria-hidden');
   if (modalPreviousFocus?.isConnected) modalPreviousFocus.focus({preventScroll:true});
@@ -593,7 +609,7 @@ async function refreshDiscovery(force = false) {
   finally { state.discoveryLoading = false; if (state.view === 'home' && !state.activeServer && state.homeTab === 'spaces') renderMain(); }
 }
 function showPublicServer(serverId) {
-  const server = state.discovery.find(server => server.id === serverId); if (!server) return;
+  const server = [...state.discovery,...discoverySearch.servers].find(server => server.id === serverId); if (!server) return;
   showModal(`<h2 id="modal-title">${e(server.name)}</h2><div class="modal-description prose">${UI.markdown(server.description)}</div><div class="server-editor">${UI.serverImagePreview(server)}</div><h3>Server rules</h3><div class="server-rules">${UI.markdown(server.rules || 'This server has not added any rules yet.')}</div><div class="modal-footer"><button class="button-secondary" data-action="close-modal">Cancel</button><button class="button-primary" data-action="join-public-server" data-id="${e(server.id)}">Join server</button></div>`);
 }
 function updateServerImages() {
@@ -638,12 +654,13 @@ function updateProfileCard() {
 function showSearch(kind = 'quick') {
   const messageSearch = kind === 'messages' || kind === 'pinned';
   if (messageSearch && !state.activeConv) { toast('Open a conversation to search its messages.'); return; }
-  const title = kind === 'new-dm' ? 'New message' : kind === 'pinned' ? 'Pinned messages' : messageSearch ? 'Search messages' : 'Search Nexus';
-  showModal(`<h2 id="modal-title">${title}</h2><p class="modal-description">${kind === 'new-dm' ? 'Find someone by their permanent username.' : kind === 'pinned' ? 'Pinned messages in this conversation.' : messageSearch ? `Search in ${e(UI.conversationName(state))}.` : 'Search your channels, communities, and people.'}</p>${kind !== 'pinned' ? `<input id="workspace-search" type="search" placeholder="${kind === 'new-dm' ? 'Type a username…' : messageSearch ? 'Search messages…' : 'Search channels or people…'}" autocomplete="off" aria-label="Search">` : ''}<div class="search-results" id="search-results"></div>`, { type: `search:${kind}` });
+  const title = kind === 'discovery' ? 'Search public servers' : kind === 'new-dm' ? 'New message' : kind === 'pinned' ? 'Pinned messages' : messageSearch ? 'Search messages' : 'Search Nexus';
+  showModal(`<h2 id="modal-title">${title}</h2><p class="modal-description">${kind === 'discovery' ? 'Find public communities by name or description.' : kind === 'new-dm' ? 'Find someone by their permanent username.' : kind === 'pinned' ? 'Pinned messages in this conversation.' : messageSearch ? `Search in ${e(UI.conversationName(state))}.` : 'Search your channels, communities, and people.'}</p>${kind !== 'pinned' ? `<input id="workspace-search" type="search" placeholder="${kind === 'discovery' ? 'Search public servers…' : kind === 'new-dm' ? 'Type a username…' : messageSearch ? 'Search messages…' : 'Search channels or people…'}" autocomplete="off" aria-label="Search">` : ''}<div class="search-results" id="search-results"></div>`, { type: `search:${kind}`,wide:kind==='discovery' });
   if(kind!=='pinned')$('#workspace-search')?.focus({preventScroll:true});
   runSearch('', kind).catch(error => toast(error.message, true));
 }
 async function runSearch(query, kind) {
+  if(kind==='discovery'){await discoverySearch.search(query);return;}
   const revision = ++searchRevision;
   let html = '';
   if (kind === 'messages' || kind === 'pinned') {
@@ -655,8 +672,9 @@ async function runSearch(query, kind) {
     if (kind === 'quick') {
       html = state.servers.flatMap(s => s.channels.map(c => ({ ...c, serverName: s.name }))).filter(c => `${c.name} ${c.serverName}`.toLowerCase().includes(q)).slice(0, 8).map(c => `<button class="search-item" data-action="conversation" data-id="${e(c.id)}">${icon(c.type === 'voice' ? 'voice' : 'hash', 20)}<span><strong>${e(c.name)}</strong><small>${e(c.serverName)}</small></span>${icon('arrow', 13)}</button>`).join('');
     }
-    let users = state.users.filter(u => u.id !== state.user.id && u.username.toLowerCase().includes(q));
-    if (query.length >= 2) {
+    const usernameQuery = normalizeUsernameQuery(query);
+    let users = state.users.filter(u => u.id !== state.user.id && u.username.toLowerCase().includes(usernameQuery.toLowerCase()));
+    if (usernameQuery.length >= CONFIG.usernameSearchMinLength) {
       const result = await request(`/api/users?q=${encodeURIComponent(query)}`); users = result.users;
       for (const user of users) if (!state.users.some(u => u.id === user.id)) state.users.push(user);
     }
@@ -687,14 +705,12 @@ function renderDock() {
   dock.innerHTML = `<div class="dock-info">${icon('voice', 15)}<strong>In voice room</strong><button class="icon-button" data-action="leave-voice" aria-label="Disconnect">${icon('hangup', 15)}</button></div><button data-action="return-to-call">${e(UI.conversationName(state, current.active.conversationId))} ${icon('arrow', 11)}</button>`;
 }
 function renderCall() {
+  if(state.user){const controls=$('#sidebar .user-controls');if(controls)syncMarkup(controls,UI.userControls(call));}
   const activeId = call.active?.conversationId || null;
   if (activeId !== previousCallId) {
     if (state.user) sounds.play(activeId ? 'join' : 'leave');
     previousCallId = activeId;
-  } else if (activeId && (call.muted !== previousMuteState || call.deafened !== previousDeafenState)) {
-    sounds.play(call.muted || call.deafened ? 'mute' : 'unmute', { preview: true });
   }
-  previousMuteState = call.muted; previousDeafenState = call.deafened;
   if (state.user && state.view === 'voice' && !mediaView.update()) renderMain();
   mediaView.bind(); renderDock();
   if (!getCall().active) $('#media-root').innerHTML = '';
@@ -759,6 +775,7 @@ async function loadEarlier() {
 }
 
 // One delegated interaction layer keeps freshly rendered views consistent.
+document.addEventListener('error', event => UI.avatarImageFailed(event.target), true);
 document.addEventListener('click', async event => {
   const button = event.target.closest('[data-action]');
   if (!$('#popover-root').contains(event.target)) closePopover();
@@ -839,13 +856,13 @@ document.addEventListener('click', async event => {
       case 'position-attachment': {const file=state.pending[Number(button.dataset.index)];if(file){const crop=await artworkEditor.open({url:file.localUrl||file.url,crop:file.previewCrop,kind:'attachment',title:'Position image preview'});if(crop&&state.pending.includes(file)){file.previewCrop=crop;renderPending();}}break;}
       case 'toggle-attachment-spoiler': {const file=state.pending[Number(button.dataset.index)];if(file){file.spoiler=!file.spoiler;renderPending();}break;}
       case 'reveal-image': {const message=messageForUI(id),index=Number(button.dataset.index);if(message?.attachments?.[index]?.spoiler){state.revealedSpoilers.add(`${id}:${index}`);renderMessages();}break;}
-      case 'conversation-menu': {const peer=UI.activeConversation(state)?.peerId;popover(`<button class="popover-item" data-action="start-call">${icon('phone',20)}Start voice call</button><button class="popover-item" data-action="start-video">${icon('video',20)}Start video call</button><button class="popover-item danger" data-action="delete-dm" data-id="${e(state.activeConv)}">${icon('trash',20)}Delete conversation</button><button class="popover-item danger" data-action="block-user" data-id="${e(peer)}">${icon('ban',20)}Block user</button>`,button,260);break;}
+      case 'conversation-menu': {const peer=UI.activeConversation(state)?.peerId;popover(`<button class="popover-item" data-action="start-call">${icon('phone',20)}Start voice call</button><button class="popover-item danger" data-action="delete-dm" data-id="${e(state.activeConv)}">${icon('trash',20)}Delete conversation</button><button class="popover-item danger" data-action="block-user" data-id="${e(peer)}">${icon('ban',20)}Block user</button>`,button,260);break;}
       case 'view-image': imageViewer.open(id,Number(button.dataset.index)); break;
       case 'view-channel-cover': imageViewer.cover(UI.activeConversation(state)); break;
       case 'viewer-next': imageViewer.navigate(1); break;
       case 'viewer-previous': imageViewer.navigate(-1); break;
       case 'viewer-zoom': imageViewer.zoomBy(Number(button.dataset.delta)); break;
-      case 'viewer-fit': imageViewer.zoom=1;imageViewer.fit();break;
+      case 'viewer-fit': imageViewer.resetZoom();break;
       case 'viewer-download': await imageViewer.download(); break;
       case 'download-file': {const file=messageForUI(id)?.attachments?.[Number(button.dataset.index)];if(file)await imageViewer.download(file);break;}
       case 'collection-upload': showCollectionUpload();break;
@@ -857,6 +874,9 @@ document.addEventListener('click', async event => {
       case 'open-dm': await openDM(id); break;
       case 'new-dm': showSearch('new-dm'); break;
       case 'quick-search': showSearch('quick'); break;
+      case 'search-discovery': showSearch('discovery'); break;
+      case 'more-discovery': await discoverySearch.more(); break;
+      case 'retry-discovery': await discoverySearch.search(discoverySearch.query); break;
       case 'search-messages': showSearch('messages'); break;
       case 'pinned': await showPins(); break;
       case 'search-result-message': {
@@ -946,11 +966,14 @@ document.addEventListener('click', async event => {
         state.user = { ...state.user, ...user, preferredStatus: status }; state.users = state.users.map(u => u.id === user.id ? state.user : u); closePopover(); if (status === 'dnd') sounds.stopAll(); sendActivity(true); renderChrome(); break;
       }
       case 'join-voice': await joinVoice(false, Boolean(UI.activeConversation(state)?.peerId)); break;
-      case 'start-call': case 'start-video': state.view = 'voice'; renderAll(); await joinVoice(action === 'start-video', true); break;
+      case 'start-call': state.view = 'voice'; renderAll(); await joinVoice(false, true); break;
       case 'mute': case 'deafen': case 'toggle-video': case 'toggle-screen': {
         const current = getCall();
-        if (!current.active) { toast('Join a voice room or start a call to use these controls.'); break; }
+        if (!current.active && !['mute','deafen'].includes(action)) { toast('Join a voice room or start a call to use these controls.'); break; }
+        const before=action==='mute'?current.muted:current.deafened;
         if (action === 'mute') call.toggleMute(); else if (action === 'deafen') call.toggleDeafen(); else if (action === 'toggle-video') await call.toggleVideo(); else await call.toggleScreen();
+        const after=action==='mute'?current.muted:current.deafened;
+        if(['mute','deafen'].includes(action)&&before!==after)await sounds.feedback(action==='mute'?(after?'mute':'unmute'):(after?'deafen':'undeafen'));
         bindMedia(); renderChrome();
         break;
       }
@@ -991,7 +1014,7 @@ document.addEventListener('click', async event => {
       case 'close-modal': closeModal(); break;
       case 'auth-switch': showAuth(button.dataset.mode); break;
       case 'logout':
-        await request('/api/auth/logout', { method: 'POST', body: {} }); sounds.stopAll(); socket?.disconnect(); call.leave(false); state.user = null; showAuth(); break;
+        await request('/api/auth/logout', { method: 'POST', body: {} }); sounds.stopAll(); socket?.disconnect(); call.leave(false); state.user = null; state.lastChannels = {}; showAuth(); break;
 
     }
   } catch (error) { button.disabled = false;if(error.moderation)showModerationRestriction(error.moderation);else toast(error.message || 'Please try again.', true); }
@@ -1385,9 +1408,10 @@ function patchUserPresence(user) {
   for(const node of document.querySelectorAll(`.avatar[data-user-id="${CSS.escape(user.id)}"]`)){
     if(!node.querySelector('.presence-ring'))continue;
     for(const value of ['online','idle','dnd','invisible','offline'])node.classList.toggle(`presence-${value}`,value===status);
-    node.title=UI.statusLabel(status);node.querySelector('.presence-ring').setAttribute('aria-label',UI.statusLabel(status));
+    node.dataset.tooltip=`${user.displayName || user.username || 'Nexus user'} · ${UI.statusLabel(status)}`;node.querySelector('.presence-ring').setAttribute('aria-label',UI.statusLabel(status));if(node.hasAttribute('tabindex'))node.setAttribute('aria-label',node.dataset.tooltip);
   }
   for(const node of document.querySelectorAll(`[data-presence-label="${CSS.escape(user.id)}"]`))node.textContent=UI.statusLabel(status);
+  for(const node of document.querySelectorAll(`[data-user-badges="${CSS.escape(user.id)}"]`)){if(node.closest('#profile-card-content'))continue;const template=document.createElement('template');template.innerHTML=UI.badgesMarkup(user);syncMarkup(node,template.content.firstElementChild.innerHTML);}
   for(const node of document.querySelectorAll(`[data-user-name="${CSS.escape(user.id)}"]`))if(!node.closest('#profile-card-content'))node.textContent=user.displayName;
 }
 function syncConnectionBanner() {
@@ -1465,7 +1489,7 @@ function finishAccountDeletion() {
   const userId=state.user.id;sounds.stopAll();incomingCall=null;call.leave(false);socket?.disconnect();preferenceSync.detach();clearPending();
   for(const storage of [localStorage,sessionStorage])try{for(const key of Object.keys(storage))if(key.includes(userId))storage.removeItem(key);}catch{/* Local storage is optional. */}
   try{if(readLocal(CONFIG.preferenceOwnerKey,null)===userId)localStorage.removeItem(CONFIG.preferenceOwnerKey);}catch{/* Optional migration marker. */}
-  state.user=null;state.users=[];state.servers=[];state.dms=[];state.voice=[];state.messages=[];state.discovery=[];state.revealedSpoilers.clear();state.activeConv=null;state.activeServer=null;state.lastDM=null;profileDraft=null;serverDraft=null;roleDraft=null;modalDirty=false;closeModal(true,true);for(const selector of ['#main','#sidebar','#members','#workspace-nav']){const node=$(selector);node.replaceChildren();delete node._nexusMarkup;}showAuth();toast('Your account was permanently deleted.');
+  state.user=null;state.users=[];state.servers=[];state.dms=[];state.voice=[];state.messages=[];state.discovery=[];state.revealedSpoilers.clear();state.activeConv=null;state.activeServer=null;state.lastDM=null;state.lastChannels={};profileDraft=null;serverDraft=null;roleDraft=null;modalDirty=false;closeModal(true,true);for(const selector of ['#main','#sidebar','#members','#workspace-nav']){const node=$(selector);node.replaceChildren();delete node._nexusMarkup;}showAuth();toast('Your account was permanently deleted.');
 }
 function syncModerationFields() {
   const action=$('#moderation-action'),duration=$('#moderation-duration'),field=$('#moderation-duration-field');if(!action||!duration)return;

@@ -8,6 +8,14 @@ export const PALETTES = Object.freeze({
   gold: { name: 'Amber', accent: '#edc87a', hue: 40 },
   rose: { name: 'Rose', accent: '#ef9ec2', hue: 332 },
   slate: { name: 'Graphite', accent: '#c1cadb', hue: 221 },
+  ruby: { name: 'Ruby', accent: '#ff8fa1', hue: 350 },
+  ember: { name: 'Ember', accent: '#f5ad7a', hue: 24 },
+  citrus: { name: 'Citrus', accent: '#d4df83', hue: 68 },
+  mint: { name: 'Mint', accent: '#8cddbc', hue: 154 },
+  arctic: { name: 'Arctic', accent: '#94dbe9', hue: 193 },
+  indigo: { name: 'Indigo', accent: '#a6b0ff', hue: 237 },
+  plum: { name: 'Plum', accent: '#d2a0e3', hue: 285 },
+  sand: { name: 'Sand', accent: '#ddc3a2', hue: 31 },
 });
 export function paletteTokens(key) {
   const { accent, hue } = PALETTES[key] || PALETTES.coral;
