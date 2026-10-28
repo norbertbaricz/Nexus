@@ -3,12 +3,22 @@ const fs = require('node:fs');
 const path = require('node:path');
 const multer = require('multer');
 
+// Inspect the container signature, never the supplied filename or Content-Type.
+function isoMediaType(header) {
+  if (header.length < 12 || header.subarray(4,8).toString() !== 'ftyp') return null;
+  const brand = header.subarray(8,12).toString();
+  if (brand === 'qt  ') return 'video/quicktime';
+  if (['M4A ','M4B ','M4P '].includes(brand)) return 'audio/mp4';
+  if (['isom','mp41','mp42','avc1','hvc1','hev1','av01','M4V ','MSNV','dash'].includes(brand) || /^iso[2-9]$/.test(brand)) return 'video/mp4';
+  return null;
+}
+
 // Disk storage bounds memory regardless of the configured multi-gigabyte limit.
 function installUploads(app, ctx) {
-  const { db, config, auth, permission, HttpError, id, now, imageType, PROFILE_IMAGE_TYPES, limit, text } = ctx;
+  const { db, config, onFileRemoved, onFileCommitted, auth, permission, HttpError, id, now, imageType, PROFILE_IMAGE_TYPES, limit, text } = ctx;
   const locks = new Set();
   const location = key => path.join(config.uploadPath, key);
-  const remove = async key => fs.promises.rm(location(key), { force: true }).catch(() => {});
+  const remove = async key => {onFileRemoved?.(key);await fs.promises.rm(location(key),{force:true}).catch(()=>{});};
   const purposeFor = req => req.query.purpose === 'role' ? 'role' : req.query.purpose === 'channel' ? 'channel' : req.query.purpose === 'server' ? 'server' : req.query.purpose === 'profile' ? 'profile' : 'attachment';
   function validateTarget(req, purpose) {
     if (!['server','channel','role'].includes(purpose)) return null;
@@ -19,7 +29,7 @@ function installUploads(app, ctx) {
   async function commit(file, ownerId, purpose, serverId) {
     const handle = await fs.promises.open(file.path, 'r'); const header = Buffer.alloc(48);
     try { await handle.read(header, 0, header.length, 0); } finally { await handle.close(); }
-    const mime = imageType(header) || (header.subarray(4,8).toString()==='ftyp'&&['isom','iso2','mp41','mp42','avc1','M4V '].includes(header.subarray(8,12).toString()) ? 'video/mp4' : header.subarray(0,4).equals(Buffer.from([0x1a,0x45,0xdf,0xa3])) ? 'video/webm' : header.subarray(0,4).toString()==='OggS' ? 'audio/ogg' : header.subarray(0,3).toString()==='ID3' || header[0]===255&&(header[1]&0xe0)===0xe0 ? 'audio/mpeg' : header.subarray(0,4).toString()==='RIFF'&&header.subarray(8,12).toString()==='WAVE' ? 'audio/wav' : 'application/octet-stream');
+    const mime = imageType(header) || isoMediaType(header) || (header.subarray(0,4).equals(Buffer.from([0x1a,0x45,0xdf,0xa3])) ? 'video/webm' : header.subarray(0,4).toString()==='OggS' ? 'audio/ogg' : header.subarray(0,3).toString()==='ID3' || header[0]===255&&(header[1]&0xe0)===0xe0 ? 'audio/mpeg' : header.subarray(0,4).toString()==='RIFF'&&header.subarray(8,12).toString()==='WAVE' ? 'audio/wav' : 'application/octet-stream');
     if (file.size > maximum(purpose) || purpose !== 'attachment' && !PROFILE_IMAGE_TYPES.has(mime)) throw new HttpError(400, 'Choose a PNG, JPEG, WebP or GIF within the image limit.');
     const fileId = id('f');
     await fs.promises.rename(file.path, location(fileId));
@@ -27,6 +37,7 @@ function installUploads(app, ctx) {
       db.prepare('INSERT INTO files (id,ownerId,serverId,purpose,name,mime,size,diskName,createdAt) VALUES (?,?,?,?,?,?,?,?,?)')
         .run(fileId, ownerId, serverId, purpose, file.originalname, mime, file.size, fileId, now());
     } catch (error) { await remove(fileId); throw error; }
+    onFileCommitted?.(db.prepare('SELECT * FROM files WHERE id=?').get(fileId));
     return { id: fileId, url: `/files/${fileId}`, name: file.originalname, type: mime, size: file.size };
   }
   const cleanName = name => text(name, 160, 'File name', 1).replace(/[\x00-\x1f\x7f/\\]/g, '_');
@@ -119,4 +130,4 @@ function installUploads(app, ctx) {
   }, 60000); janitor.unref();
   return () => clearInterval(janitor);
 }
-module.exports = { installUploads };
+module.exports = { installUploads, isoMediaType };

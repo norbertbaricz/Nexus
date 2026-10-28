@@ -4,6 +4,7 @@ import { MEDIA_CONFIG, normalizeMediaPreferences, microphoneConstraints, videoCo
 export const RTC_CONFIG = Object.freeze({
   ackTimeoutMs: 10000, connectionTimeoutMs: 25000, restartDelayMs: 4000, maxRestarts: 2,
   maxPendingSignals: 80,
+  orientationDelayMs:150,
 });
 const stopStream = stream => stream?.getTracks().forEach(track => { track.onended = null; track.stop(); });
 
@@ -15,6 +16,10 @@ export class NexusCall {
     this.localStream = null; this.cameraStream = null; this.screenStream = null;
     this.preferredMuted = false; this.muted = false; this.deafened = false; this.video = false; this.sharing = false; this.joining = false;
     this.connectionIssue = ''; this.cameraPending = false; this.screenPending = false; this.devicePending = false; this.resumeAfterReconnect = null; this.stageListener = false;
+    this.orientationPending=false;this.orientationTimer=null;this.orientationTask=null;
+    this.orientationChanged=()=>{this.orientationPending=true;clearTimeout(this.orientationTimer);this.orientationTimer=setTimeout(()=>this.refreshCameraOrientation(),RTC_CONFIG.orientationDelayMs);};
+    globalThis.window?.screen?.orientation?.addEventListener?.('change',this.orientationChanged);
+    globalThis.window?.addEventListener?.('orientationchange',this.orientationChanged);
   }
   bind(socket) {
     socket.on('rtc:signal', signal => this.signal(signal).catch(error => this.onError(error.message)));
@@ -87,9 +92,18 @@ export class NexusCall {
       if (error.name === 'NotFoundError') throw new Error('No microphone or camera was found. Connect a device and try again.');
       if (error.name === 'NotReadableError') throw new Error('Another app is using this device. Close it and try again.');
       throw error;
-    } finally { if (generation === this.generation) { this.joining = false; this.onChange(); } }
+    } finally { if (generation === this.generation) { this.joining = false; this.onChange();if(this.orientationPending)this.orientationChanged(); } }
   }
   cameraConstraints() { return videoConstraints('camera', this.getMediaSettings()); }
+  async refreshCameraOrientation() {
+    const track=this.currentCameraTrack();if(!this.active||!track){this.orientationPending=false;return;}
+    if(this.joining||this.cameraPending||this.devicePending){this.orientationPending=true;return;}
+    if(this.orientationTask)return this.orientationTask;
+    const generation=this.generation;this.orientationPending=false;
+    const task=(async()=>{try{await track.applyConstraints(this.cameraConstraints());if(generation===this.generation&&this.currentCameraTrack()===track)this.onChange();}
+      catch(error){if(generation===this.generation)console.warn('[Nexus camera] Orientation refresh kept the existing camera.',{name:error.name});}
+    })();this.orientationTask=task;try{await task;}finally{if(this.orientationTask===task)this.orientationTask=null;if(this.orientationPending)this.orientationChanged();}
+  }
   watchInputTracks() {
     for (const track of [...(this.localStream?.getAudioTracks() || []), ...(this.currentCameraTrack() ? [this.currentCameraTrack()] : [])]) {
       track.onended = () => { if (this.active) { this.onError(`${track.kind === 'audio' ? 'Microphone' : 'Camera'} disconnected. Choose a connected device from the call controls.`); this.onChange(); } };
@@ -100,7 +114,11 @@ export class NexusCall {
   currentVideoTrack() { return this.currentScreenTrack() || this.currentCameraTrack(); }
   enqueue(peer, action) { const task = peer.operations.catch(() => {}).then(action); peer.operations = task; return task; }
   async createPeer(socketId, offer = false) {
-    if (this.peers.has(socketId)) return this.peers.get(socketId);
+    if (this.peers.has(socketId)) {
+      const peer=this.peers.get(socketId);
+      if(offer&&!peer.pc.remoteDescription&&!peer.pc.localDescription)await this.enqueue(peer,()=>this.makeOffer(peer));
+      return peer;
+    }
     const config = this.getConfig();
     const pc = this.peerFactory({ iceServers: config.iceServers || [], iceTransportPolicy: config.iceTransportPolicy || 'all', bundlePolicy: 'max-bundle' });
     const peer = { pc, socketId, stream: this.streamFactory(), cameraStream: this.streamFactory(), screenStream: this.streamFactory(),
@@ -108,26 +126,18 @@ export class NexusCall {
       polite: String(this.getSocket()?.id).localeCompare(socketId) > 0,
       reportedIssue: false, localCandidates: 0, restarts: 0, timer: null, restartTimer: null, remoteMids: null, negotiated: false };
     this.peers.set(socketId, peer);
-    // Pre-negotiate separate slots so camera and screen can run at the same time.
-    peer.audioTransceiver = pc.addTransceiver('audio', { direction: 'sendrecv' });
-    peer.cameraTransceiver = pc.addTransceiver('video', { direction: 'sendrecv' });
-    peer.screenTransceiver = pc.addTransceiver('video', { direction: 'sendrecv' });
-    peer.videoSender = peer.cameraTransceiver.sender;
-    // Explicit stream associations and MID metadata keep two video sources distinct.
-    for (const [transceiver, stream] of [[peer.audioTransceiver, this.localStream], [peer.cameraTransceiver, this.cameraStream || this.localStream], [peer.screenTransceiver, this.screenStream]]) {
-      if (stream && transceiver.sender.setStreams) transceiver.sender.setStreams(stream);
-    }
-    peer.ready = Promise.all([
-      peer.audioTransceiver.sender.replaceTrack(this.localStream?.getAudioTracks()[0] || null),
-      peer.cameraTransceiver.sender.replaceTrack(this.currentCameraTrack()),
-      peer.screenTransceiver.sender.replaceTrack(this.currentScreenTrack()),
-    ]);
+    // Only the offerer creates slots. An answerer binds the remote offered slots;
+    // stopping speculative addTransceiver slots can cause endless renegotiation.
+    peer.ready = Promise.resolve();
     pc.onicecandidate = ({ candidate }) => {
       if (candidate) { peer.localCandidates++; this.emit('rtc:signal', { to: socketId, type: 'candidate', data: candidate.toJSON() }).catch(() => {}); }
     };
     pc.ontrack = ({ track, transceiver }) => {
-      const screen = peer.remoteMids?.screen != null ? transceiver?.mid === peer.remoteMids.screen : transceiver === peer.screenTransceiver || transceiver?.mid != null && transceiver.mid === peer.screenTransceiver.mid || transceiver === pc.getTransceivers().filter(item => item.mid != null && item.receiver?.track?.kind === 'video')[1];
+      const expected=track.kind==='audio'?[peer.remoteMids?.audio]:[peer.remoteMids?.camera,peer.remoteMids?.screen];
+      if(expected.some(mid=>mid!=null)&&!expected.includes(transceiver?.mid))return;
+      const screen = peer.remoteMids?.screen != null ? transceiver?.mid === peer.remoteMids.screen : transceiver === peer.screenTransceiver || transceiver?.mid != null && transceiver.mid === peer.screenTransceiver?.mid || transceiver === pc.getTransceivers().filter(item => item.mid != null && item.receiver?.track?.kind === 'video')[1];
       const stream = track.kind === 'audio' ? peer.stream : screen ? peer.screenStream : peer.cameraStream;
+      for(const previous of stream.getTracks())if(previous!==track)stream.removeTrack(previous);
       if (!stream.getTracks().some(item => item.id === track.id)) stream.addTrack(track);
       track.onunmute = () => this.onChange(); track.onmute = () => this.onChange(); track.onended = () => this.onChange(); this.onChange();
     };
@@ -152,7 +162,7 @@ export class NexusCall {
         ? 'The media connection could not be established. Rejoin and check the relay connection.'
         : 'No direct media connection was found. This deployment needs a working TURN relay for this network.');
     }, config.rtcConnectionTimeoutMs || RTC_CONFIG.connectionTimeoutMs);
-    await peer.ready; await this.configureSenders(peer);
+    await peer.ready;
     if (offer) await this.enqueue(peer, () => this.makeOffer(peer));
     return peer;
   }
@@ -162,19 +172,34 @@ export class NexusCall {
     peer.reportedIssue = true; this.connectionIssue = message; this.onError(message); this.onChange();
   }
   async configureSenders(peer, preferences = this.getMediaSettings()) {
-    for (const [sender, encoding] of [[peer.audioTransceiver.sender, { maxBitrate: MEDIA_CONFIG.audioBitrate }], [peer.cameraTransceiver.sender, videoEncoding('camera', preferences)], [peer.screenTransceiver.sender, videoEncoding('screen', preferences)]]) {
-      if (!sender.getParameters || !sender.setParameters) continue;
+    for (const [sender, encoding] of [[peer.audioTransceiver?.sender, { maxBitrate: MEDIA_CONFIG.audioBitrate }], [peer.cameraTransceiver?.sender, videoEncoding('camera', preferences)], [peer.screenTransceiver?.sender, videoEncoding('screen', preferences)]]) {
+      if (!sender?.getParameters || !sender.setParameters) continue;
       try { const parameters = sender.getParameters(); if (parameters.encodings?.length) { for (const item of parameters.encodings) Object.assign(item, encoding); await sender.setParameters(parameters); } }
       catch (error) { console.warn('[Nexus media] Browser could not apply an encoding preference.', { name: error.name }); }
     }
   }
   async makeOffer(peer, restart = false) {
-    if (!this.active || peer.pc.connectionState === 'closed') return;
+    if (!this.active || this.peers.get(peer.socketId)!==peer || peer.pc.connectionState === 'closed' || peer.pc.signalingState!=='stable') return;
     try {
       peer.makingOffer = true;
+      if(!peer.audioTransceiver){
+        peer.audioTransceiver=peer.pc.addTransceiver('audio',{direction:'sendrecv'});
+        peer.cameraTransceiver=peer.pc.addTransceiver('video',{direction:'sendrecv'});
+        peer.screenTransceiver=peer.pc.addTransceiver('video',{direction:'sendrecv'});
+        peer.videoSender=peer.cameraTransceiver.sender;
+        peer.ready=this.bindLocalTracks(peer);await peer.ready;
+      }
       await peer.pc.setLocalDescription(await peer.pc.createOffer(restart ? { iceRestart: true } : {}));
       await this.emit('rtc:signal', { to: peer.socketId, type: 'offer', data: peer.pc.localDescription.toJSON(), media: this.mediaMids(peer) });
     } finally { peer.makingOffer = false; }
+  }
+  async bindLocalTracks(peer) {
+    for(const [transceiver,track,stream] of [[peer.audioTransceiver,this.localStream?.getAudioTracks()[0]||null,this.localStream],[peer.cameraTransceiver,this.currentCameraTrack(),this.cameraStream||this.localStream],[peer.screenTransceiver,this.currentScreenTrack(),this.screenStream]]){
+      transceiver.direction='sendrecv';
+      if(stream)transceiver.sender.setStreams?.(stream);
+      await transceiver.sender.replaceTrack(track);
+    }
+    await this.configureSenders(peer);
   }
   async signal(signal) {
     if(signal.userId && !this.getPeerAllowed(signal.userId))return;
@@ -222,14 +247,12 @@ export class NexusCall {
     for (const transceiver of peer.pc.getTransceivers()) {
       if (selected.has(transceiver) || transceiver.stopped) continue;
       await transceiver.sender.replaceTrack(null);
-      transceiver.stop();
+      // A rolled-back local offer can leave unassociated transceivers. Keep
+      // them inactive: stopping a slot with no MID cannot be acknowledged.
+      transceiver.direction='inactive';
     }
     peer.audioTransceiver = audio; peer.cameraTransceiver = camera; peer.screenTransceiver = screen; peer.videoSender = camera.sender;
-    for (const [transceiver, track, stream] of [[audio, this.localStream?.getAudioTracks()[0] || null, this.localStream], [camera, this.currentCameraTrack(), this.cameraStream || this.localStream], [screen, this.currentScreenTrack(), this.screenStream]]) {
-      transceiver.direction = 'sendrecv';
-      if (stream && transceiver.sender.setStreams) transceiver.sender.setStreams(stream);
-      await transceiver.sender.replaceTrack(track);
-    }
+    await this.bindLocalTracks(peer);
   }
   async restartPeer(peer) {
     if (!this.active || peer.pc.connectionState === 'closed' || peer.pc.connectionState === 'connected') return;
@@ -290,14 +313,14 @@ export class NexusCall {
         }
       }
       for (const peer of this.peers.values()) {
-        if (microphoneStream) replacements.push({ sender: peer.audioTransceiver.sender, next: microphoneStream.getAudioTracks()[0], previous: oldMicrophone || null });
-        if (cameraStream) replacements.push({ sender: peer.cameraTransceiver.sender, next: cameraStream.getVideoTracks()[0], previous: oldCamera });
+        if (microphoneStream && peer.audioTransceiver) replacements.push({ sender: peer.audioTransceiver.sender, next: microphoneStream.getAudioTracks()[0], previous: oldMicrophone || null });
+        if (cameraStream && peer.cameraTransceiver) replacements.push({ sender: peer.cameraTransceiver.sender, next: cameraStream.getVideoTracks()[0], previous: oldCamera });
       }
       // Wait for every sender before releasing the old hardware; partial failures roll back.
       const results = await Promise.allSettled(replacements.map(item => item.sender.replaceTrack(item.next)));
       if (!stillActive()) return;
       const failed = results.find(result => result.status === 'rejected'); if (failed) throw failed.reason;
-      if (cameraStream) for (const peer of this.peers.values()) peer.cameraTransceiver.sender.setStreams?.(cameraStream);
+      if (cameraStream) for (const peer of this.peers.values()) peer.cameraTransceiver?.sender.setStreams?.(cameraStream);
       if (microphoneStream) {
         if (oldMicrophone) { oldMicrophone.onended = null; this.localStream.removeTrack(oldMicrophone); oldMicrophone.stop(); }
         this.localStream.addTrack(microphoneStream.getAudioTracks()[0]); microphoneStream = null;
@@ -318,14 +341,14 @@ export class NexusCall {
       throw error;
     } finally {
       stopStream(microphoneStream); stopStream(cameraStream);
-      if (generation === this.generation) { this.devicePending = false; this.onChange(); }
+      if (generation === this.generation) { this.devicePending = false; this.onChange();if(this.orientationPending)this.orientationChanged(); }
     }
   }
   async replaceVideo() {
-    await Promise.all([...this.peers.values()].flatMap(peer => [peer.cameraTransceiver.sender.replaceTrack(this.currentCameraTrack()), peer.screenTransceiver.sender.replaceTrack(this.currentScreenTrack())]));
+    await Promise.all([...this.peers.values()].filter(peer=>peer.cameraTransceiver&&peer.screenTransceiver).flatMap(peer => [peer.cameraTransceiver.sender.replaceTrack(this.currentCameraTrack()), peer.screenTransceiver.sender.replaceTrack(this.currentScreenTrack())]));
     for (const peer of this.peers.values()) {
-      if (peer.cameraTransceiver.sender.setStreams && this.cameraStream) peer.cameraTransceiver.sender.setStreams(this.cameraStream);
-      if (peer.screenTransceiver.sender.setStreams && this.screenStream) peer.screenTransceiver.sender.setStreams(this.screenStream);
+      if (peer.cameraTransceiver?.sender.setStreams && this.cameraStream) peer.cameraTransceiver.sender.setStreams(this.cameraStream);
+      if (peer.screenTransceiver?.sender.setStreams && this.screenStream) peer.screenTransceiver.sender.setStreams(this.screenStream);
       await this.configureSenders(peer);
     }
     await this.update();
@@ -349,9 +372,9 @@ export class NexusCall {
     } catch (error) {
       stopStream(this.cameraStream); this.cameraStream = null;
       this.localStream?.getVideoTracks().forEach(track => track.stop()); this.video = false;
-      await Promise.all([...this.peers.values()].map(peer => peer.cameraTransceiver.sender.replaceTrack(null).catch(() => {})));
+      await Promise.all([...this.peers.values()].map(peer => peer.cameraTransceiver?.sender.replaceTrack(null).catch(() => {})));
       throw error;
-    } finally { this.cameraPending = false; this.onChange(); }
+    } finally { this.cameraPending = false; this.onChange();if(this.orientationPending)this.orientationChanged(); }
   }
   async toggleScreen() {
     if (!this.active || this.screenPending || this.devicePending) return;
@@ -369,7 +392,7 @@ export class NexusCall {
       await this.replaceVideo();
     } catch (error) {
       stopStream(this.screenStream); this.screenStream = null; this.sharing = false;
-      await Promise.all([...this.peers.values()].map(peer => peer.screenTransceiver.sender.replaceTrack(null).catch(() => {})));
+      await Promise.all([...this.peers.values()].map(peer => peer.screenTransceiver?.sender.replaceTrack(null).catch(() => {})));
       throw error;
     } finally { this.screenPending = false; this.onChange(); }
   }
@@ -379,6 +402,7 @@ export class NexusCall {
     peer.pc.onconnectionstatechange = null; peer.pc.ontrack = null; peer.pc.onicecandidate = null; peer.pc.onnegotiationneeded = null; peer.pc.onicecandidateerror = null; peer.pc.close();
   }
   leave(notify = true) {
+    clearTimeout(this.orientationTimer);this.orientationPending=false;this.orientationTask=null;
     ++this.generation;
     if (notify && this.getSocket()?.connected) this.emit('voice:leave').catch(() => {});
     for (const peer of this.peers.values()) this.disposePeer(peer);

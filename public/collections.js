@@ -1,5 +1,6 @@
 import { icon } from './icons.js';
 import { cropStyle } from './artwork.js';
+import { motionImageAttributes } from './animated-media.js';
 
 // A single collection type presents visual media and downloadable documents.
 export function collectionMarkup(s,{header,messages,canWrite}) {
@@ -10,7 +11,7 @@ export function collectionMessages(s,h) {
   const items=s.messages.flatMap(message=>(message.attachments||[]).map((file,index)=>({message,file,index})));
   const html=items.map(({message,file,index})=>{
     const user=userFor(message.authorId),image=file.type?.startsWith('image/'),video=file.type?.startsWith('video/'),audio=file.type?.startsWith('audio/'),hidden=!revealed(message,index);
-    const preview=hidden?`<span class="collection-file-symbol">${icon('eyeOff',28)}<small>Spoiler · tap to reveal</small></span>`:image?`<img src="${e(file.url)}" style="${cropStyle(file.previewCrop)}" alt="${e(file.name)}" loading="lazy" decoding="async" draggable="false">`:`<span class="collection-file-symbol">${icon(video?'video':audio?'music':'folder',32)}<small>${video?'Video':audio?'Audio':e(file.name.split('.').at(-1).toUpperCase().slice(0,8))}</small></span>`;
+    const preview=hidden?`<span class="collection-file-symbol">${icon('eyeOff',28)}<small>Spoiler · tap to reveal</small></span>`:image?`<img src="${e(file.url)}" ${motionImageAttributes(file)} style="${cropStyle(file.previewCrop)}" alt="${e(file.name)}" loading="lazy" decoding="async" draggable="false">`:`<span class="collection-file-symbol">${icon(video?'video':audio?'music':'folder',32)}<small>${video?'Video':audio?'Audio':e(file.name.split('.').at(-1).toUpperCase().slice(0,8))}</small></span>`;
     const action=hidden?'reveal-image':image||video||audio?'view-image':'download-file';
     return `<article class="collection-item" id="collection-${e(message.id)}-${index}" data-message="${e(message.id)}" tabindex="0" aria-label="File message options"><button class="collection-preview ${hidden?'spoiler-preview':''}" data-action="${action}" data-id="${e(message.id)}" data-index="${index}" aria-label="${hidden?'Reveal spoiler':image||video||audio?'Open':'Download'} ${e(file.name)}" ${!hidden&&!image&&!video&&!audio&&!canDownload(file)?'disabled':''}>${preview}</button><div class="collection-item-copy"><strong>${e(file.name)}</strong>${message.text?`<div class="media-caption">${markdown(message.text)}</div>`:''}<div class="collection-metadata"><button data-action="profile" data-id="${e(user.id)}">${avatar(user)}<span>${e(user.displayName)}</span></button><time datetime="${e(message.createdAt)}">${e(formatDate(message.createdAt))}</time>${file.size?`<span>${bytes(file.size)}</span>`:''}</div></div><div class="collection-item-actions">${!hidden&&canDownload(file)?`<button class="icon-button" data-action="download-file" data-id="${e(message.id)}" data-index="${index}" aria-label="Download ${e(file.name)}">${icon('download',20)}</button>`:''}<button class="icon-button" data-action="message-menu" data-id="${e(message.id)}" aria-label="File options">${icon('more',20)}</button></div></article>`;
   }).join('');

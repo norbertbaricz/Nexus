@@ -23,13 +23,41 @@ Node 26.12.1 is supported. This release also repairs a previous Multer lock-entr
 2. Extract the ZIP and copy the **contents of its Nexus folder** over your existing installation, replacing the application files. Copy `package.json`, `package-lock.json` and `release.json` together with the complete `public/`, `server/` and `scripts/` folders.
 3. Keep your existing `.env`, `data/` and any externally configured storage. The ZIP does not contain or reset these private files. Retain your personal `setup/` files if you have customized them.
 4. Start that same installation with `start.bat` or `bash start.sh`, or restart its service. The launcher installs missing/mismatched dependencies when needed.
-5. Reload the website once. Settings → Account should show **Nexus 2.23.0**.
+5. Reload the website once. Settings → Account should show **Nexus 2.35.0**.
 
 No separate update command or installer is required. An overlay copy can leave retired files from earlier packages on disk. If present from an older release, you can remove `update.bat`, `update.sh`, `scripts/update.js` and `test/update.test.js` once; the current website does not load or require them. Use the current ZIP as the application-file inventory and preserve your private configuration/storage when removing older application files.
 
 The website subsequently checks for new server builds when reconnecting, returning to a tab and once per minute. It refreshes automatically when no call, modal, message send or pending upload is active. Otherwise a Reload notice lets you choose when to refresh. Active calls and unsaved work require confirmation. Pages from older releases need the first manual reload after installing this version.
 
 A download cannot replace another machine's running process. Update the folder actually used by the VPS service or tunnel; starting another extracted copy creates a separate installation.
+
+## Mobile keyboard and installed website
+
+The page starts behind one opaque dark cover while its first interface, font and essential artwork settle. Returning to a tab keeps the current interface mounted. A fixed dark document canvas and shared viewport controller handle keyboard sizing, including out-of-order visual/layout resize events. Sending from the active composer retains focus instead of closing and reopening the keyboard. Phone DM headers have a clear avatar/name gap; the GIF action has no permanent border. The + menu offers Gallery, Files and Audio, plus explicit camera actions on touch devices. See [mobile interaction and keyboard behavior](docs/MOBILE_KEYBOARD.md).
+
+Call tiles keep focus, fullscreen and member options in one responsive action row. On phones, the media pane scrolls separately from the call controls, including short landscape layouts. Attachment menus and preview actions preserve an active editor; completed uploads never force keyboard focus. The first-load screen is retained.
+
+Existing Edge installations can retain old installation metadata. After copying the full update and restarting Nexus, close and reopen the installed website. If the installed copy still uses its previous background/icon metadata, remove that installed shortcut and install it again from the updated website. Removing the shortcut is not a Nexus account-deletion action; this update does not require removing the account or server data.
+
+## Background notifications
+
+Nexus 2.26 adds standards-based Web Push for DMs, mentions and eligible server messages. Notifications can arrive while the page is closed or the device is locked, subject to browser/OS support and permissions. Set `PUBLIC_ORIGIN` to the stable public HTTPS origin and restart Nexus, then enable **Settings → Preferences → Notifications** on each device. Activation automatically requests one confirmation notification while Do not disturb is off. There is no separate test button. The private signing identity is generated automatically in the database; no Apple developer, Firebase project or copied VAPID key is required.
+
+On iPhone/iPad, use a supported OS/browser to add Nexus to Home Screen, open that installed copy and enable notifications from its settings. On supported Android and desktop browsers, grant website notifications and allow the browser/app to run in the background. Installation alone does not grant permission. Focus, battery restrictions, force-stop and browser shutdown policies can prevent or delay delivery.
+
+Alerts use the official Nexus logo and identify the sender, DM or server/channel, with a bounded message or attachment preview. Spoiler contents remain hidden; the operating system controls lock-screen presentation. Clicking opens the authorized conversation. DND, blocks, access, read state and a focused device are checked before sending. Signing out or resetting the password revokes that session's background subscriptions. See [push setup and limits](docs/PUSH_NOTIFICATIONS.md).
+
+## Link previews and lighter motion
+
+Shared links now include the official Nexus logo, a 1200 × 630 card and server-rendered Open Graph/social metadata. Keep `PUBLIC_ORIGIN` set to the current public HTTPS origin, including the current ngrok address when tunneling. Without it, preview metadata uses a validated direct Host header; forwarded hosts, invitation parameters and recovery fragments are never published in the card.
+
+Settings → Preferences → Animations now controls animated images as well as interface transitions. When off, GIFs display still frames and play during hover, keyboard focus or press. Offscreen/background media and content behind dialogs pause too. The operating system's reduced-motion preference is respected. JavaScript/CSS transfer supports Brotli and gzip without new dependencies. See [performance and link previews](docs/PERFORMANCE_AND_LINKS.md) for operation and limits.
+
+## Video playback and navigation
+
+For automatic compatible video copies, install FFmpeg with H.264/AAC encoders on the VPS/Node host. Set `FFMPEG_PATH` only when its executable is not on the service PATH, then restart Nexus. Every completed video upload enters a persistent background queue automatically. Existing videos are discovered in small batches. One encoder works at a time; the viewer has no optimization button or preparation notice and uses the private fast-start MP4 when ready. Original files remain unchanged. See [video setup and budgets](docs/VIDEO_PLAYBACK.md).
+
+In the image viewer, use the mouse wheel to zoom around the cursor and drag an enlarged image with the primary mouse button. Fit restores the centered view; native touch scrolling/pinch and media navigation remain available. The video viewer retains native playback controls in short landscape screens. Live camera dimensions update when capture rotates, without reopening devices. Last server channels, DM and section are retained separately for each account in the browser, including a new tab or installed-site launch on the same origin. Restoring a voice/stage page never automatically joins its call. This history is local to each browser/device and does not transfer to a different origin or account.
 
 ## Sign-in and account recovery
 
@@ -47,6 +75,7 @@ Existing accounts do not gain a verified email or recovery codes automatically. 
 - Private verified recovery email, downloadable recovery codes and single-use password resets that revoke existing sessions.
 - DMs, public server discovery, roles/permissions, categories and text, announcement, forum, media, voice and stage channels.
 - Markdown, mentions, replies, grouping, typing names, unread markers, search, reactions, persistent pins and spoilers.
+- Optional per-device system notifications with background Web Push, branded alerts and conversation links.
 - Up to 5 GiB per file, resumable uploads, previews, clipboard images, galleries and authorized in-app media viewing.
 - Blocking, timed mutes, kick/ban, voice disconnection, server/account deletion and administrative activity.
 - Independent microphone/camera/screen senders, speaking indicators, mute/deafen and incoming calls.
@@ -80,7 +109,7 @@ See [community setup](docs/COMMUNITY_SETUP.md) and [creator identity](docs/CREAT
 | `release.json` | Fingerprints for a consistent release |
 | `licenses/`, `LICENSE.txt` | Required license material |
 
-Private `.env`, `data/`, backups, installed dependencies, native app projects and historical databases are excluded from the ZIP. The database upgrades additively to schema 11; existing account IDs, password hashes, servers and messages are retained.
+Private `.env`, `data/`, backups, installed dependencies, native app projects and historical databases are excluded from the ZIP. The database upgrades additively to schema 13; existing account IDs, password hashes, servers and messages are retained.
 
 Use `npm run check` and `npm test`. See [changes](docs/CHANGES.md), [coverage](docs/FEATURE_STATUS.md), [validation](docs/VALIDATION.md), [permissions](docs/PERMISSIONS.md), [context menus](docs/CONTEXT_MENUS.md), [GIF search](docs/GIF_SEARCH.md), [security](docs/SECURITY.md) and [VPS deployment](deploy/README.md).
 

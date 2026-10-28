@@ -2,6 +2,8 @@
 
 The application implements authenticated WebRTC signaling, separate microphone/camera/screen tracks with offered-m-line adoption on the answering peer, offer-collision handling, queued early ICE, bounded connection recovery persistent media elements, explicit camera/screen MID metadata and later renegotiation handling. A joined room is distinct from an established media connection.
 
+Only an initiating peer allocates the three local transceivers. An answerer binds the offered slots instead of creating and stopping speculative slots, which could keep negotiation looping. Rolled-back orphan slots stay inactive, queued offers recheck stable state and receiver streams discard obsolete tracks without stopping call-owned media. Empty audio streams are not attached to a player before track arrival. Muting/deafening, stage permissions and blocks are applied per peer; another member joining cannot enable a different member's microphone.
+
 ## Device selection and streaming quality
 
 Use the attached arrows on microphone, deafen, camera and screen controls, or open Settings → Voice & video. Opening an input chooser or selecting an input requests browser access automatically when device names are not available. There is no separate Allow button; the browser/operating system still requires the user's consent. Temporary discovery tracks are stopped after enumeration. Selecting an input uses its exact device ID; an unavailable device produces a useful error instead of silently choosing a different microphone or camera. Current and future peer audio uses the selected speaker when setSinkId is supported. Browser permission may be required through selectAudioOutput. Otherwise Nexus explains that output is controlled by system sound settings. The speaker test uses the selected output; general notification sounds retain their system output.
@@ -36,6 +38,14 @@ Leaving the TURN settings empty retains STUN-only development behavior. STUN can
 ## Speaking feedback
 
 A local-only Web Audio analyser measures input energy from your live microphone and received peer audio. Speaking tiles use a green outline and animated bars. Mute, deafening, stage permissions, blocks and leaving stop the corresponding indicators. This does not send audio samples or speaking telemetry to the server. Enable call audio if the browser suspends playback/analysis. A local speaking indicator proves local input energy; it does not prove another device received the stream.
+
+Speaking bars, the green outline, names and separate mute/deafen icons occupy explicit layers above camera/screen pixels. Camera and screenshare tiles share their participant's audio state; sidebar occupants display it too.
+
+## Uploaded video files
+
+Uploaded files use a separate workflow from WebRTC calls. Every completed video upload is queued automatically, and older videos are discovered in bounded background batches. Install FFmpeg with libx264/AAC on the Node host. One encoder works at a time and excess work stays in SQLite, including across host restarts. The viewer silently observes readiness and uses a private H.264/AAC MP4 when available, with no optimization button or preparation notice. Originals and their download permissions remain unchanged. Status and byte ranges enforce the original file's access checks. See [video setup, limits and cache behavior](VIDEO_PLAYBACK.md).
+
+The viewer contains the picture and retains playback controls in short landscape layouts. Live phone cameras use primary-orientation constraints with an envelope that accepts either rotation. Orientation events refresh the existing track; decoded resize events update the displayed aspect without recapturing the camera or microphone. This does not force unsupported browser/OS capture behavior. Verify physical rotation in both directions on the intended devices.
 
 ## Device checks
 
@@ -75,3 +85,18 @@ Device and capture references:
 - https://www.w3.org/TR/audio-output/
 - https://www.w3.org/TR/screen-capture/
 - https://www.w3.org/TR/mediacapture-streams/
+
+
+## Responsive call controls
+
+Focus, fullscreen and participant options share one responsive tile toolbar; audio-only participants keep member options. Live tile updates reconcile labels while retaining media elements. Phone media scrolls independently from the footer, so a short viewport does not place call controls over a participant. Expanded tiles escape the scroll pane and container sizing to retain the fullscreen fallback.
+
+Tune `--tile-action-size`, `--tile-action-gap`, `--tile-action-inset` and `--tile-speaking-bottom` near the top of public/styles.css. Narrow thumbnails shrink controls together to keep the row inside their bounds. Physical capture, network quality and browser permission rules are unchanged.
+
+## Return-to-call navigation
+
+While browsing away from an active call, a compact green card sits above the local profile in the desktop sidebar. On phones it owns a footer row below the composer instead of overlaying messages, channel lists or call controls. Very short screens use a smaller thumbnail. Opening the active call or disconnecting hides the card and recovers its space. Long labels truncate while retaining their complete accessible description.
+
+An active published screenshare or camera can appear as one muted live preview. Screen sharing has initial priority; the next-preview button cycles available streams. Navigation, member/presence updates and sidebar resizing retain the existing preview player. Stopping publication or ending the track removes it immediately, falling back to another available source. No media source means only return/disconnect controls remain.
+
+The preview reuses tracks already received by the connected call. It never captures a device, creates a second audio path, joins another room or grants permission to view a disconnected/private room. Leaving the call clears the preview without stopping tracks owned by a different component. Safari/Android playback and real remote-media quality still require physical-device and deployment checks.

@@ -220,6 +220,41 @@ function openDatabase(filename) {
       PRAGMA user_version = 11;
     `);
   });
+  transaction(db, () => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id TEXT PRIMARY KEY, userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        sessionHash TEXT NOT NULL REFERENCES sessions(hash) ON DELETE CASCADE,
+        deviceId TEXT NOT NULL, bindingId TEXT NOT NULL, origin TEXT NOT NULL,
+        subscription TEXT NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL,
+        lastResult TEXT NOT NULL DEFAULT '', lastResultAt INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(userId,deviceId)
+      );
+      CREATE INDEX IF NOT EXISTS push_subscriptions_user ON push_subscriptions(userId);
+      CREATE TABLE IF NOT EXISTS push_outbox (
+        id TEXT PRIMARY KEY, subscriptionId TEXT NOT NULL REFERENCES push_subscriptions(id) ON DELETE CASCADE,
+        messageId TEXT REFERENCES messages(id) ON DELETE CASCADE, conversationId TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('message','test')), createdAt INTEGER NOT NULL,
+        nextAttemptAt INTEGER NOT NULL, expiresAt INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS push_outbox_ready ON push_outbox(nextAttemptAt);
+      PRAGMA user_version = 12;
+    `);
+  });
+  transaction(db, () => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS video_jobs (
+        fileId TEXT PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+        fingerprint TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('queued','processing','ready','failed','evicted')),
+        attempts INTEGER NOT NULL DEFAULT 0, nextAttemptAt INTEGER NOT NULL DEFAULT 0,
+        createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL,
+        lastError TEXT NOT NULL DEFAULT ''
+      );
+      CREATE INDEX IF NOT EXISTS video_jobs_ready ON video_jobs(status,nextAttemptAt,createdAt);
+      PRAGMA user_version = 13;
+    `);
+  });
   return db;
 }
 

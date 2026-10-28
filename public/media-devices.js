@@ -33,7 +33,10 @@ export function microphoneConstraints(value) {
 export function videoConstraints(kind, value, includeDevice = true) {
   const prefs = normalizeMediaPreferences(value), [width, height] = MEDIA_CONFIG.resolutions[prefs[`${kind}Resolution`]], fps = prefs[`${kind}Fps`];
   // Screen constraints scale the chosen surface; they never preselect or filter it.
-  return { width: { ideal: width, max: width }, height: { ideal: height, max: height }, frameRate: { ideal: fps, max: fps },
+  // Camera constraints use the sensor's primary orientation. A square maximum
+  // envelope permits the browser to rotate frames without a landscape-only cap.
+  return { width: { ideal: width, max: width }, height: { ideal: height, max: kind==='camera'?width:height }, frameRate: { ideal: fps, max: fps },
+    ...(kind==='camera'?{resizeMode:{ideal:'none'}}:{}),
     ...(kind === 'camera' && includeDevice ? prefs.cameraId ? { deviceId: { exact: prefs.cameraId } } : { facingMode: { ideal: 'user' } } : {}) };
 }
 export function videoEncoding(kind, value) {

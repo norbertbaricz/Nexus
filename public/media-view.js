@@ -21,6 +21,11 @@ export class NexusMediaView {
     } });
   }
   markup(node, html) { syncMarkup(node, html); }
+  releaseVideoTiles() {
+    for(const tile of this.getRoot()?.querySelectorAll('.voice-tile') || []) {
+      const video=tile.querySelector('video');if(video){video.pause();video.srcObject=null;video.remove();}tile.classList.remove('has-video');
+    }
+  }
   update() {
     const state = this.getState(), call = this.getCall();
     const view = this.getRoot()?.querySelector('.voice-view');
@@ -50,7 +55,7 @@ export class NexusMediaView {
       else {
         tile.classList.toggle('featured', key === layout.focusKey);
         tile.classList.toggle('expects-video', descriptor.kind === 'screen' ? descriptor.sharing : descriptor.camera);
-        for (const selector of ['.tile-avatar', '.tile-name', '.tile-state']) this.markup(tile.querySelector(selector), desired.querySelector(selector).innerHTML);
+        for (const selector of ['.tile-avatar', '.tile-name', '.tile-state', '.tile-actions']) this.markup(tile.querySelector(selector), desired.querySelector(selector).innerHTML);
       }
       const target = key === layout.focusKey ? primary : thumbnails;
       const index = positions.get(target); positions.set(target, index + 1);
@@ -99,7 +104,7 @@ export class NexusMediaView {
       if (!audio) { audio = document.createElement('audio'); audio.muted = true; audio.autoplay = true; audio.setAttribute('playsinline', ''); audio.dataset.audioPeer = socketId; media.append(audio); }
       const participant = state.voice.find(person => person.socketId === socketId);
       const routed = this.output.route(audio);
-      const silenced = !routed || !participant || call.deafened || participant.stageSpeaker === false || participant.canSpeak === false || state.blockedIds?.includes(participant.userId);
+      const silenced = !routed || !participant || call.deafened || participant.muted || participant.deafened || participant.stageSpeaker === false || participant.canSpeak === false || state.blockedIds?.includes(participant.userId);
       this.audio.apply(socketId, participant?.userId, peer.stream, audio, silenced); if (routed && !audio.muted) this.playAudio(audio);
       activityKeys.add(socketId); this.activity.watch(socketId, peer.stream, audio.muted || participant?.muted);
     }
@@ -114,7 +119,9 @@ export class NexusMediaView {
       const visible = call.active.conversationId === state.activeConv && participant && (screen ? participant.sharing : participant.camera) && stream?.getVideoTracks().some(track => track.readyState === 'live');
       let video = tile.querySelector('video');
       if (!visible) { video?.remove(); tile.classList.remove('has-video'); continue; }
-      if (!video) { video = document.createElement('video'); video.autoplay = true; video.playsInline = true; video.setAttribute('playsinline', ''); video.muted = true; video.addEventListener('loadeddata', () => { if (video.isConnected) tile.classList.add('has-video'); }); tile.prepend(video); }
+      if (!video) { video = document.createElement('video'); video.autoplay = true; video.playsInline = true; video.setAttribute('playsinline', ''); video.muted = true;
+        const dimensions=()=>{if(!video.isConnected)return;tile.classList.toggle('has-video',video.readyState>=MEDIA_READY_STATE);tile.classList.toggle('is-portrait',video.videoHeight>video.videoWidth);if(video.videoWidth&&video.videoHeight)tile.style.setProperty('--video-aspect',`${video.videoWidth} / ${video.videoHeight}`);};
+        video.addEventListener('loadeddata',dimensions);video.addEventListener('resize',dimensions);tile.prepend(video); }
       if (video.srcObject !== stream) { video.srcObject = stream; video.play().catch(() => {}); }
       else if (video.paused && video.readyState >= MEDIA_READY_STATE) video.play().catch(() => {});
       tile.classList.toggle('has-video', video.readyState >= MEDIA_READY_STATE);

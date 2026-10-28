@@ -1,20 +1,32 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-starting>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-  <meta name="theme-color" content="#171719">
-  <meta name="description" content="Nexus connects your communities, private messages and voice rooms through one real-time workspace.">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#111216">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <style>html,body{background-color:#111216;color:#f4f4f6;color-scheme:dark;margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:none}html{min-height:100%}body{position:fixed;inset:0}#startup-screen{position:fixed;inset:0;z-index:700;display:grid;place-content:center;gap:16px;text-align:center;background:var(--bg,#111216);font:15px system-ui,sans-serif;color:#b2b5c0;opacity:1;transition:opacity 140ms ease}#startup-screen svg{width:44px;height:44px;margin:auto;color:#ff8c84}#startup-screen p{margin:0}#startup-screen.is-ready{opacity:0;pointer-events:none}html[data-starting] #app{visibility:hidden}</style>
+  <meta name="description" content="A place for your people. Discover communities, send private messages and spend time together in voice.">
+  <meta name="application-name" content="Nexus">
+  <!-- nexus-social-preview -->
   <title>Nexus · Your world, connected.</title>
   <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+  <link rel="icon" type="image/png" sizes="192x192" href="/assets/nexus-icon-192.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/nexus-icon-180.png">
+  <link rel="manifest" href="/manifest.webmanifest">
   <link rel="preload" href="/assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/styles.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
-  <div id="app" class="app-shell">
+  <div id="startup-screen" role="status" aria-live="polite"><svg viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M11 35V13L37 35V13" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg><p>Opening Nexus…</p></div>
+  <div id="app" class="app-shell" inert aria-hidden="true">
     <nav id="workspace-nav" class="workspace-nav" aria-label="Nexus navigation"></nav>
-    <aside id="sidebar" class="sidebar" aria-label="Channels and conversations"></aside>
+    <section id="call-dock" class="call-dock" aria-label="Active call" hidden><div id="call-dock-controls" class="call-dock-controls"></div><div id="call-preview" class="call-preview" hidden></div></section>
+    <aside id="sidebar" class="sidebar" aria-label="Channels and conversations"><div id="sidebar-content" class="sidebar-content"></div><div id="user-bar" class="user-bar"></div></aside>
     <main id="main" class="main-panel" tabindex="-1">
       <div class="boot-screen"><div class="boot-logo">N</div><p>Getting your space ready…</p></div>
     </main>
@@ -22,7 +34,6 @@
   </div>
   <div id="modal-root"></div>
   <div id="popover-root"></div>
-  <div id="call-dock" class="call-dock" hidden></div>
   <div id="media-root" class="media-root"></div>
   <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
   <input id="attachment-input" type="file" multiple hidden>

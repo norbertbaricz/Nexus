@@ -23,6 +23,28 @@ function fixture(type='text'){
  return {config:{maxMessageLength:8000},user,users:[user],servers:[server],dms:[],activeServer:server.id,activeConv:'c_one',messages:[],pins:[],connected:true,revealedSpoilers:new Set(),forumLayout:'grid',collectionLayout:'grid'};
 }
 
+test('return-to-call strip follows the active call across DMs, servers and other views',async()=>{
+ const ui=await browserModule('ui.js'),state=fixture();
+ const room={id:'v_live',serverId:'s_one',name:'The Lounge',type:'voice'};state.servers[0].channels.push(room);
+ const call={active:{conversationId:room.id}};
+ for(const view of ['chat','home','voice']){
+  state.view=view;
+  const html=ui.callDockMarkup(state,call);
+  assert.ok(html.includes('The Lounge'));assert.ok(html.includes('In voice room'));
+  assert.equal((html.match(/data-action="return-to-call"/g)||[]).length,1);
+  assert.equal((html.match(/data-action="leave-voice"/g)||[]).length,1);
+ }
+ state.activeConv=room.id;state.view='voice';assert.equal(ui.callDockMarkup(state,call),'');
+ state.view='chat';assert.ok(ui.callDockMarkup(state,call));
+ const peer={id:'u_peer',displayName:'Member <test> "one"',username:'peer'};state.users.push(peer);state.dms.push({id:'dm_live',peerId:peer.id});
+ state.activeServer=null;state.activeConv='dm_live';call.active.conversationId='dm_live';
+ const html=ui.callDockMarkup(state,call);assert.ok(html.includes('In voice call'));assert.ok(html.includes('Member &lt;test&gt; &quot;one&quot;'));assert.ok(!html.includes('<test>'));
+ state.view='voice';assert.equal(ui.callDockMarkup(state,call),'');
+ state.view='chat';state.activeServer='s_one';state.activeConv='c_one';assert.ok(ui.callDockMarkup(state,call).includes('In voice call'));
+ for(const stopped of [{},{active:null},{active:{}}])assert.equal(ui.callDockMarkup(state,stopped),'');
+ state.user=null;assert.equal(ui.callDockMarkup(state,call),'');
+});
+
 test('sign-in accepts complete copied usernames and recovery forms keep secrets out of markup',async()=>{
  const security=await browserModule('security-ui.js'),config={minPasswordLength:10};
  const login=security.authScreenMarkup('login',config,{notice:'<img src=x onerror=alert(1)>'});
@@ -80,7 +102,7 @@ test('context targeting preserves native text/link/media menus and ignores unrel
 });
 test('long-press context actions cancel during scrolling and suppress the following native click',async t=>{
  const handlers=new Map(),opened=[],node={contains:target=>target===content},content={closest:()=>null};
- globalValue(t,'document',{addEventListener:(type,handler)=>{if(!handlers.has(type))handlers.set(type,[]);handlers.get(type).push(handler);},querySelector:()=>null,getSelection:()=>({isCollapsed:true})});globalValue(t,'window',{innerWidth:390});t.mock.timers.enable({apis:['setTimeout']});
+ globalValue(t,'document',{addEventListener:(type,handler)=>{if(!handlers.has(type))handlers.set(type,[]);handlers.get(type).push(handler);},querySelector:()=>null,getSelection:()=>({isCollapsed:true})});globalValue(t,'window',{innerWidth:390,document:globalThis.document,AbortController,PointerEvent:class{},setTimeout:(...args)=>setTimeout(...args),clearTimeout:(...args)=>clearTimeout(...args)});t.mock.timers.enable({apis:['setTimeout']});
  const {installGestures}=await browserModule('gestures.js');installGestures({enabled:()=>true,contextTarget:()=>({kind:'conversation',id:'c_touch',node}),contextOptions:target=>opened.push(target.id)});
  const fire=(type,x,y)=>{let prevented=false;const event={target:content,pointerType:'touch',pointerId:1,isPrimary:true,clientX:x,clientY:y,preventDefault(){prevented=true;},stopImmediatePropagation(){}};for(const handler of handlers.get(type)||[])handler(event);return prevented;};
  fire('pointerdown',100,200);fire('pointermove',102,240);t.mock.timers.tick(600);fire('pointerup',102,240);assert.equal(opened.length,0);
@@ -139,7 +161,7 @@ test('consecutive mention highlights join and document spoilers mount no file UR
 test('touch message gestures reply, expose actions and cancel a long press after movement',async t=>{
  const handlers=new Map(),classes=new Set(),style=new Map(),actions=[],message={dataset:{message:'m_one'},style:{setProperty:(key,value)=>style.set(key,value),removeProperty:key=>style.delete(key)},classList:{add:key=>classes.add(key),remove:key=>classes.delete(key)},contains:target=>target===content};
  const content={closest:selector=>selector==='.message[data-message]'?message:null},document={addEventListener:(type,fn)=>{if(!handlers.has(type))handlers.set(type,[]);handlers.get(type).push(fn);},querySelector:selector=>selector==='#app'?{classList:{contains:()=>false}}:null,getSelection:()=>({isCollapsed:true})};
- globalValue(t,'document',document);globalValue(t,'window',{innerWidth:390});t.mock.timers.enable({apis:['setTimeout']});
+ globalValue(t,'document',document);globalValue(t,'window',{innerWidth:390,document:globalThis.document,AbortController,PointerEvent:class{},setTimeout:(...args)=>setTimeout(...args),clearTimeout:(...args)=>clearTimeout(...args)});t.mock.timers.enable({apis:['setTimeout']});
  const {installGestures}=await browserModule('gestures.js');installGestures({enabled:()=>true,reply:id=>actions.push(['reply',id]),messageOptions:id=>actions.push(['options',id]),canReply:()=>true});
  const fire=(type,x,y)=>{const event={target:content,pointerId:1,pointerType:'touch',isPrimary:true,clientX:x,clientY:y,preventDefault:()=>{},stopImmediatePropagation:()=>{}};for(const fn of handlers.get(type)||[])fn(event);};
  fire('pointerdown',100,200);fire('pointermove',180,205);fire('pointerup',180,205);assert.deepEqual(actions,[['reply','m_one']]);assert.equal(style.size,0);
@@ -233,19 +255,27 @@ test('shared tooltip geometry keeps labels inside narrow viewport edges',async()
  const bottom=tooltipPosition({left:300,top:450,bottom:480,width:20},{width:200,height:40},{width:320,height:480});assert.ok(bottom.left+200<=312);assert.ok(bottom.top+40<450);
 });
 
-test('floating notices retain a stable viewport anchor while controls scroll underneath',async()=>{
- const {Notices}=await browserModule('notices.js');let height=80,boxes=[{left:0,right:390,top:740,bottom:790,width:390,height:50}],width=390,viewportHeight=844;
- const scope={querySelectorAll:()=>boxes.map(box=>({getBoundingClientRect:()=>box}))},root={children:[{}],style:{},getBoundingClientRect:()=>({height})};
- const notices=Object.create(Notices.prototype);notices.root=root;notices.anchor=null;notices.context=()=>({width,height:viewportHeight,top:0,left:0,inSidebar:false,scope});
+test('notices stay above the composer while message controls scroll and stack height changes',async t=>{
+ const {Notices}=await browserModule('notices.js');let height=80;
+ const visual={width:390,height:844,scale:1,offsetTop:0,offsetLeft:0},composer={getBoundingClientRect:()=>({top:740,bottom:844,width:390,height:104})};
+ globalValue(t,'window',{innerWidth:390,innerHeight:844,visualViewport:visual});globalValue(t,'document',{querySelector:()=>null,querySelectorAll:selector=>{assert.ok(!selector.includes('button'));return[composer];}});
+ const root={children:[{}],style:{},getBoundingClientRect:()=>({height:Math.min(height,parseFloat(root.style.maxHeight)||Infinity)})},notices=Object.create(Notices.prototype);notices.root=root;
  notices.resize();const original={top:root.style.top,left:root.style.left,width:root.style.width};
- for(let index=0;index<12;index++){boxes=[{left:0,right:390,top:100+index*35,bottom:140+index*35,width:390,height:40}];notices.resize();assert.deepEqual({top:root.style.top,left:root.style.left,width:root.style.width},original);}
+ for(let index=0;index<12;index++){notices.resize(true);assert.deepEqual({top:root.style.top,left:root.style.left,width:root.style.width},original);}
  const bottom=parseFloat(root.style.top)+height;height=140;notices.resize();assert.equal(parseFloat(root.style.top)+height,bottom);
- viewportHeight=390;notices.resize(true);assert.ok(parseFloat(root.style.top)>=12);assert.ok(parseFloat(root.style.top)+height<=378);
+ window.innerHeight=visual.height=390;notices.resize();assert.ok(parseFloat(root.style.top)>=12);assert.ok(parseFloat(root.style.top)+140<=378);
 });
-test('dense notice placement keeps its compact width across observer notifications',async()=>{
- const {Notices}=await browserModule('notices.js');const scope={querySelectorAll:()=>[{getBoundingClientRect:()=>({left:0,right:320,top:0,bottom:480,width:320,height:480})}]};
- const root={children:[{}],style:{},getBoundingClientRect:()=>({height:80})},notices=Object.create(Notices.prototype);notices.root=root;notices.anchor=null;notices.context=()=>({width:320,height:480,top:0,left:0,inSidebar:false,scope});
- notices.resize();assert.equal(root.style.width,'224px');assert.equal(root.style.top,'12px');for(let index=0;index<8;index++){notices.resize();assert.equal(root.style.width,'224px');assert.equal(root.style.top,'12px');}
+test('modal notices keep a deterministic bottom anchor without reading scrolling inner buttons',async t=>{
+ const {Notices}=await browserModule('notices.js'),box={left:12,width:296,bottom:468},modal={getBoundingClientRect:()=>box,querySelectorAll:()=>{throw new Error('Do not scan scrolling controls');}};
+ globalValue(t,'window',{innerWidth:320,innerHeight:480});globalValue(t,'document',{querySelector:selector=>selector==='#modal-root .modal'?modal:null});
+ const root={children:[{}],style:{},getBoundingClientRect:()=>({height:80})},notices=Object.create(Notices.prototype);notices.root=root;
+ notices.resize();const original={top:root.style.top,left:root.style.left,width:root.style.width};assert.equal(root.style.top,'296px');
+ for(let index=0;index<8;index++){notices.resize(true);assert.deepEqual({top:root.style.top,left:root.style.left,width:root.style.width},original);}
+});
+test('a tall notice stack does not overlap dialog actions through an insufficient gap below the dialog',async t=>{
+ const {Notices}=await browserModule('notices.js'),modal={getBoundingClientRect:()=>({left:12,width:296,bottom:380}),querySelector:()=>({getBoundingClientRect:()=>({top:320})})};
+ globalValue(t,'window',{innerWidth:320,innerHeight:480});globalValue(t,'document',{querySelector:selector=>selector==='#modal-root .modal'?modal:null});
+ const root={children:[{}],style:{},getBoundingClientRect:()=>({height:140})},notices=Object.create(Notices.prototype);notices.root=root;notices.resize();assert.ok(parseFloat(root.style.top)+140<320);
 });
 test('all interface palettes are accepted by account sync and retain readable dark surfaces',async()=>{
  const {PALETTES,paletteTokens}=await browserModule('appearance.js'),ui=await browserModule('ui.js'),{normalizePreferences}=require('../server/preferences');assert.equal(Object.keys(PALETTES).length,16);
@@ -266,9 +296,9 @@ test('an open shared tooltip follows status changes and preserves the latest nat
 
 function viewerFixture(t,{type='image/png',width=1600,height=900}={}){
  const observed=[],events=new Map(),content={style:{}},out={disabled:false},inside={disabled:false};
- const stage={isConnected:true,clientWidth:360,clientHeight:480,scrollLeft:0,scrollTop:0,classList:{toggle(){}},querySelector(selector){return selector==='.viewer-stage-content'?content:media;},get scrollWidth(){return Math.max(this.clientWidth,parseFloat(content.style.width)||0);},get scrollHeight(){return Math.max(this.clientHeight,parseFloat(content.style.height)||0);}};
+ const stage={isConnected:true,clientWidth:360,clientHeight:480,scrollLeft:0,scrollTop:0,classList:{toggle(){},remove(){}},querySelector(selector){return selector==='.viewer-stage-content'?content:media;},get scrollWidth(){return Math.max(this.clientWidth,parseFloat(content.style.width)||0);},get scrollHeight(){return Math.max(this.clientHeight,parseFloat(content.style.height)||0);}};
  let paused=0,markup='',renders=0;
- const media={style:{},classList:{contains:name=>name==='viewer-image'&&type.startsWith('image/')},naturalWidth:type.startsWith('image/')?width:0,naturalHeight:type.startsWith('image/')?height:0,videoWidth:type.startsWith('video/')?width:0,videoHeight:type.startsWith('video/')?height:0,addEventListener:(name,callback)=>events.set(name,callback),pause(){paused++;}};
+ const media={style:{},classList:{contains:name=>name==='viewer-image'&&type.startsWith('image/')||name==='viewer-video'&&type.startsWith('video/')},naturalWidth:type.startsWith('image/')?width:0,naturalHeight:type.startsWith('image/')?height:0,videoWidth:type.startsWith('video/')?width:0,videoHeight:type.startsWith('video/')?height:0,addEventListener:(name,callback)=>events.set(name,callback),removeEventListener:(name,callback)=>{if(events.get(name)===callback)events.delete(name);},pause(){paused++;}};
  class Observer {constructor(callback){this.callback=callback;observed.push(this);}observe(node){this.node=node;}disconnect(){this.node=null;}}
  globalValue(t,'window',{addEventListener(){}});globalValue(t,'document',{querySelector:selector=>selector==='.viewer-stage'?stage:selector.includes('data-delta="-1"')?out:inside});globalValue(t,'ResizeObserver',Observer);globalValue(t,'getComputedStyle',()=>({paddingLeft:'12px',paddingRight:'12px',paddingTop:'12px',paddingBottom:'12px'}));
  const state={messages:[{id:'m_viewer',text:'A caption',attachments:[{url:'/files/fixture',name:'fixture',type}]}]};
@@ -290,11 +320,11 @@ test('video retains automatic containment through metadata and resizing, and clo
  viewer.open('m_viewer');assert.ok(!f.markup.includes('data-action="viewer-zoom"'));assert.equal(f.observed[0].node,f.stage);
  viewer.zoomBy(1);assert.equal(viewer.zoom,1);
  f.media.videoWidth=1080;f.media.videoHeight=1920;f.events.get('loadedmetadata')();
- assert.equal(f.media.style.height,'');assert.equal(f.media.style.width,'');
+ assert.equal(f.media.style.height,'456px');assert.equal(f.media.style.width,'256.5px');
  f.stage.clientWidth=700;f.stage.clientHeight=200;f.observed[0].callback();
- assert.equal(f.media.style.height,'');assert.equal(f.media.style.width,'');
+ assert.equal(f.media.style.height,'176px');assert.equal(f.media.style.width,'99px');
  assert.equal(f.content.style.width,'');assert.equal(f.content.style.height,'');assert.equal(f.renders,1);
- viewer.close();assert.equal(f.paused,1);assert.equal(f.observed[0].node,null);assert.equal(viewer.stage,null);assert.equal(viewer.items.length,0);
+ viewer.close();assert.equal(f.events.size,0);assert.equal(f.paused,1);assert.equal(f.observed[0].node,null);assert.equal(viewer.stage,null);assert.equal(viewer.items.length,0);
 });
 
 test('switching media pauses playback and keeps one close action with no empty footer',async t=>{
@@ -366,6 +396,14 @@ test('voice controls keep camera and audio available while hiding unsupported sc
  const mobile=ui.voiceButtons(call,{type:'dm'},null,false);assert.ok(!mobile.includes('data-action="toggle-screen"'));for(const action of ['mute','deafen','toggle-video','leave-voice'])assert.ok(mobile.includes(`data-action="${action}"`));
  const state={user:{id:'u'},activeConv:'native-voice',activeServer:null,servers:[],dms:[{id:'native-voice',type:'dm'}],screenCaptureAvailable:false};assert.ok(!ui.voiceControlMarkup(state,call).includes('data-action="toggle-screen"'));
 });
+test('call tile media and member actions share one group while local tiles retain only their own media actions',async()=>{
+ const ui=await browserModule('ui.js'),state=fixture();state.users.push({id:'u_remote',displayName:'Remote <member>',username:'remote'});
+ const remote={socketId:'peer_remote',userId:'u_remote',kind:'screen',sharing:true},html=ui.voiceTileMarkup(state,remote),group=html.indexOf('class="tile-actions"');
+ assert.ok(group>=0);for(const action of ['focus-media','fullscreen-media','participant-menu'])assert.ok(html.indexOf(`data-action="${action}"`)>group,action);
+ assert.equal((html.match(/class="tile-actions"/g)||[]).length,1);assert.match(html,/Remote &lt;member&gt;/);assert.ok(!html.includes('Remote <member>'));
+ const local=ui.voiceTileActionsMarkup(state,{...remote,userId:state.user.id});assert.ok(local.includes('fullscreen-media'));assert.ok(!local.includes('participant-menu'));
+ state.users.find(user=>user.id==='u_remote').displayName='New name';assert.match(ui.voiceTileActionsMarkup(state,remote),/Options for New name/);
+});
 
 test('device menus render escaped hardware names and expose selected and unavailable choices',async()=>{
  const {mediaMenuMarkup,mediaSettingsMarkup}=await browserModule('media-ui.js');
@@ -390,4 +428,56 @@ test('participant controls escape names, expose a usable slider and keep moderat
  assert.match(menu,/Two &lt;script&gt;/);assert.doesNotMatch(menu,/<script>/);assert.match(menu,/max="200"/);assert.match(menu,/value="45"/);assert.match(menu,/Only you hear this change/);assert.doesNotMatch(menu,/data-action="moderate-member"/);
  const self=participantMenuMarkup(state.user,{volume:100,muted:false},{self:true});assert.doesNotMatch(self,/participant-volume|block-user|open-dm/);
  const tile=ui.voiceTileMarkup(state,{socketId:'peer',userId:'u_two',kind:'camera',camera:false});assert.match(tile,/data-user-id="u_two"/);assert.match(tile,/data-action="participant-menu"/);assert.match(tile,/tabindex="0"/);
+});
+
+test('mute and deafen are separate accessible overlays on camera and screen tiles and channel occupants',async()=>{
+ const ui=await browserModule('ui.js'),state=fixture('voice');state.voice=[{userId:state.user.id,socketId:'peer',conversationId:'c_one',muted:true,deafened:true,camera:true,sharing:true}];
+ for(const kind of ['camera','screen']){const html=ui.voiceTileMarkup(state,{...state.voice[0],kind});assert.ok(html.includes('aria-label="Microphone muted"'));assert.ok(html.includes('aria-label="Deafened"'));}
+ const sidebar=ui.renderSidebar(state,{});assert.ok(sidebar.includes('aria-label="Deafened"'));assert.equal(ui.voiceAudioStateMarkup({muted:false,deafened:false}),'');
+});
+test('file video fitting preserves portrait/landscape ratios and detects audio-only unsupported video decode',async()=>{
+ const {containedVideoSize,videoPlaybackIssue}=await browserModule('image-viewer.js');
+ assert.deepEqual(containedVideoSize(1920,1080,320,300),{width:320,height:180});const portrait=containedVideoSize(360,640,320,480);assert.equal(portrait.height,480);assert.equal(portrait.width,270);
+ assert.equal(containedVideoSize(0,0,300,300),null);assert.equal(videoPlaybackIssue({readyState:1,videoWidth:0,videoHeight:0}),'');assert.match(videoPlaybackIssue({readyState:4,videoWidth:0,videoHeight:0}),/audio is available/);
+ assert.equal(videoPlaybackIssue({readyState:4,videoWidth:640,videoHeight:360}),'');assert.match(videoPlaybackIssue({error:{code:3}}),/decode/);assert.match(videoPlaybackIssue({error:{code:2}}),/connection/);
+});
+
+test('account navigation survives a closed tab and cannot leak another account or an inaccessible channel',async()=>{
+ const {saveNavigation,readNavigation,validChannelHistory,lastServerChannel}=await browserModule('navigation.js'),values=new Map(),tab=new Map(),store=map=>({getItem:key=>map.get(key),setItem:(key,value)=>map.set(key,value)}),state=fixture('voice');state.lastChannels={s_one:'c_one'};state.lastDM='dm_one';state.homeTab='spaces';state.view='voice';
+ saveNavigation(state,{local:store(values),session:store(tab)});assert.equal(readNavigation(state.user.id,{local:store(values),session:store(new Map())}).conversation,'c_one');assert.equal(readNavigation('another',{local:store(values),session:store(tab)}),null);
+ assert.equal(lastServerChannel(state.servers[0],validChannelHistory(state.servers,readNavigation(state.user.id,{local:store(values),session:null}).lastChannels)).id,'c_one');state.servers[0].channels=[];assert.deepEqual(validChannelHistory(state.servers,{s_one:'c_one'}),{});
+ const blocked={getItem(){throw new Error('Storage denied');},setItem(){throw new Error('Storage denied');}};saveNavigation(state,{local:blocked,session:store(tab)});assert.equal(readNavigation(state.user.id,{local:blocked,session:store(tab)}).lastDM,'dm_one');
+});
+test('reload action notifications can be removed without discarding another error notice',async()=>{
+ const {Notices}=await browserModule('notices.js'),removed=[],update={querySelector:()=>({})},error={querySelector:()=>null},n=Object.create(Notices.prototype);n.root={children:[update,error]};n.dismiss=node=>removed.push(node);n.dismissAction('reload-client');assert.deepEqual(removed,[update]);
+});
+
+function imageControlFixture() {
+ const events=new Map(),timers=new Map(),classes=new Set(),calls=[];let sequence=0,zoom=2,released=0;
+ const stage={isConnected:true,clientWidth:300,clientHeight:200,scrollWidth:900,scrollHeight:600,scrollLeft:100,scrollTop:80,classList:{add:key=>classes.add(key),remove:key=>classes.delete(key)},addEventListener:(type,callback)=>events.set(type,callback),removeEventListener:type=>events.delete(type),setPointerCapture(){},releasePointerCapture(){released++;}};
+ const event=(extra={})=>({deltaY:-100,deltaMode:0,clientX:120,clientY:90,button:0,pointerType:'mouse',pointerId:7,prevented:false,preventDefault(){this.prevented=true;},...extra});
+ return {stage,events,timers,classes,calls,event,get released(){return released;},options:{getZoom:()=>zoom,zoomTo:(value,pointer)=>{zoom=value;calls.push([value,pointer]);},schedule:callback=>{timers.set(++sequence,callback);return sequence;},cancel:id=>timers.delete(id)},flush(){const pending=[...timers.values()];timers.clear();pending.forEach(callback=>callback());}};
+}
+test('image wheel zoom coalesces per frame, follows the pointer and preserves native browser zoom',async()=>{
+ const {ImageControls}=await browserModule('image-controls.js'),f=imageControlFixture(),controls=new ImageControls(f.options);controls.attach(f.stage);
+ const first=f.event(),second=f.event({clientX:140});f.events.get('wheel')(first);f.events.get('wheel')(second);assert.equal(first.prevented,true);assert.equal(f.timers.size,1);f.flush();assert.equal(f.calls.length,1);assert.ok(f.calls[0][0]>2);assert.deepEqual(f.calls[0][1],{x:140,y:90});
+ const native=f.event({ctrlKey:true});f.events.get('wheel')(native);assert.equal(native.prevented,false);assert.equal(f.timers.size,0);
+ f.events.get('wheel')(f.event({deltaY:10000}));f.flush();assert.ok(f.calls.at(-1)[0]>=1);controls.detach();assert.equal(f.events.size,0);
+});
+test('enlarged image dragging captures only the primary pointer, clamps edges and releases on cancellation',async()=>{
+ const {ImageControls}=await browserModule('image-controls.js'),f=imageControlFixture(),controls=new ImageControls(f.options);controls.attach(f.stage);
+ f.events.get('pointerdown')(f.event());assert.ok(f.classes.has('is-dragging'));f.events.get('pointermove')(f.event({clientX:20,clientY:10}));assert.equal(f.stage.scrollLeft,200);assert.equal(f.stage.scrollTop,160);
+ f.events.get('pointermove')(f.event({pointerId:8,clientX:4000}));assert.equal(f.stage.scrollLeft,200);
+ f.events.get('pointermove')(f.event({clientX:4000,clientY:4000}));assert.equal(f.stage.scrollLeft,0);assert.equal(f.stage.scrollTop,0);
+ f.events.get('pointercancel')(f.event());assert.equal(f.classes.has('is-dragging'),false);assert.equal(f.released,1);
+ const touch=f.event({pointerType:'touch'});f.events.get('pointerdown')(touch);assert.equal(touch.prevented,false);controls.detach();
+});
+test('closing an image cancels a scheduled wheel action and old stage handlers cannot accumulate',async()=>{
+ const {ImageControls}=await browserModule('image-controls.js'),f=imageControlFixture(),controls=new ImageControls(f.options);controls.attach(f.stage);f.events.get('wheel')(f.event());controls.detach();f.flush();assert.equal(f.calls.length,0);assert.equal(f.events.size,0);controls.attach(f.stage);assert.equal(f.events.size,7);controls.detach();
+});
+test('wheel zoom retains the image point under the cursor and Fit restores the centered image',async t=>{
+ const f=viewerFixture(t),{ImageViewer}=await browserModule('image-viewer.js'),viewer=new ImageViewer(f.options);viewer.open('m_viewer');
+ f.stage.getBoundingClientRect=()=>({left:0,top:0});f.media.getBoundingClientRect=()=>{const width=parseFloat(f.media.style.width)||336,height=parseFloat(f.media.style.height)||189;return {width,height,left:(f.stage.scrollWidth-width)/2-f.stage.scrollLeft,top:(f.stage.scrollHeight-height)/2-f.stage.scrollTop};};
+ const pointer={x:100,y:240},before=(pointer.x-f.media.getBoundingClientRect().left)/336;viewer.setZoom(2,pointer);const after=(pointer.x-f.media.getBoundingClientRect().left)/parseFloat(f.media.style.width);assert.ok(Math.abs(before-after)<.000001);assert.equal(f.stage.scrollLeft,88);assert.equal(f.renders,1);
+ viewer.setZoom(4,pointer);assert.ok(f.stage.scrollTop>0);viewer.resetZoom();assert.equal(f.stage.scrollLeft,0);assert.equal(f.stage.scrollTop,0);assert.equal(viewer.zoom,1);viewer.close();
 });

@@ -1,3 +1,5 @@
+import { preserveMotionSource } from './animated-media.js';
+
 // Preserve live nodes, focus, scroll and image decoders during message and chrome updates.
 function nodeKey(node) {
   if(node.nodeType!==1)return null;
@@ -10,6 +12,7 @@ function nodeKey(node) {
 function compatible(a,b){return a?.nodeType===b.nodeType&&(a.nodeType!==1||a.tagName===b.tagName)&&nodeKey(a)===nodeKey(b);}
 function patchNode(current,desired) {
   if(current.nodeType!==1){if(current.nodeValue!==desired.nodeValue)current.nodeValue=desired.nodeValue;return;}
+  preserveMotionSource(current,desired);
   for(const attribute of [...current.attributes])if(!desired.hasAttribute(attribute.name))current.removeAttribute(attribute.name);
   for(const attribute of desired.attributes)if(current.getAttribute(attribute.name)!==attribute.value)current.setAttribute(attribute.name,attribute.value);
   reconcile(current,desired);

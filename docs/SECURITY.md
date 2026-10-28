@@ -68,3 +68,18 @@ Only redemption changes the account. The existing password-reset transaction rec
 Context menus add no server privileges. Permissions/targets are resolved again at selection and remain checked by the API. Protected image-download policy, block checks, spoilers and destructive confirmations remain in effect. Native context menus are retained where needed for text editing and media controls.
 
 Recovery design references: [OWASP Forgot Password](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html) and [NIST account recovery](https://pages.nist.gov/800-63-4/sp800-63b/events/#recovery). This implementation is not a claim of NIST certification or an independent security audit.
+
+## Public link cards and reduced motion
+
+Only the bundled Nexus card and icons are public preview assets. Metadata is generic and does not publish personal images, memberships, message contents, invite parameters or recovery proofs. The configured origin is validated; forwarded hosts are not accepted as a substitute. Existing file authentication, block, membership and download checks remain in force.
+
+Local motion stills stay in temporary browser memory. They are not uploaded, persisted to localStorage or exposed through a new server endpoint. Sign-in/recovery screens clear the prior account's still cache and invalidate pending cache work. GIPHY static references are checked against the same provider identity as the animated reference; no arbitrary still host or active format can be stored through the message API.
+
+
+## Background notification boundaries
+
+Schema 12 stores private push subscriptions and an expiring outbox. Authenticated same-origin mutations validate the endpoint provider, HTTPS, absence of URL credentials, P-256 receiver key and device identifier. Only recognized browser-service hosts can receive outbound requests; arbitrary user URLs and private-address targets are rejected. Provider endpoint URLs are capabilities and remain server-side. The VAPID private key is generated into the private database, never returned in public config, logs or archives.
+
+Each subscription references a live account session with cascading deletion. Logout, password reset and account deletion remove its delivery authority. Sending rechecks DND, blocks, conversation access, read state and recent per-device foreground activity. The worker accepts only the current account binding and fixed generic alert content; navigation accepts only validated same-origin conversation identifiers. In-flight provider requests cannot be recalled. Bounded queues, coalescing, per-account settings/test limits, timeouts and job expiry reduce abuse; they do not guarantee delivery or replace host capacity controls.
+
+Web Push payloads use the standard encrypted content encoding and VAPID supplied by the pinned web-push dependency. Generic routing metadata is encrypted in transport, but provider timing, endpoint and the operating system's visible notification remain observable. This is not a claim of end-to-end encrypted chat or host-inaccessible storage. Worker IndexedDB contains minimal binding/public-key data, with no messages or private signing key. It has no fetch handler/private offline cache. See [push operation](PUSH_NOTIFICATIONS.md).

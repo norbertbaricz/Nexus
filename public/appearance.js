@@ -26,6 +26,9 @@ export function paletteTokens(key) {
     '--input': `hsl(${hue} 13% 8%)`, '--composer': `hsl(${hue} 14% 12%)`, '--elevated': `hsl(${hue} 15% 17%)` };
 }
 export function applyPalette(key, root = document.documentElement) {
-  for (const [name, value] of Object.entries(paletteTokens(key))) root.style.setProperty(name, value);
+  const tokens = paletteTokens(key);
+  for (const [name, value] of Object.entries(tokens)) root.style.setProperty(name, value);
   root.dataset.palette = PALETTES[key] ? key : 'coral';
+  const theme = root.ownerDocument?.querySelector('meta[name="theme-color"]');
+  if (theme && theme.getAttribute('content') !== tokens['--bg']) theme.setAttribute('content', tokens['--bg']);
 }

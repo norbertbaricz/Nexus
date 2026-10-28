@@ -1,0 +1,8 @@
+http_ece 1.2.0
+
+License declared by the pinned npm package: MIT
+Author: {"name": "Martin Thomson", "email": "martin.thomson@gmail.com"}
+Contributors: [{"name": "Marco Castelluccio", "email": "mcastelluccio@mozilla.com"}]
+Source: https://github.com/martinthomson/encrypted-content-encoding
+
+The npm 1.2.0 tarball includes the MIT license declaration in package.json; it does not include a separate license text. This record preserves that upstream declaration and attribution.

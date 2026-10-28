@@ -1,7 +1,6 @@
 // Easy-to-tune client values. Server-authoritative limits arrive from /api/config.
 export const CONFIG = Object.freeze({
   mobileBreakpoint: 760,
-  keyboardViewportDifference: 120,
   sidebarLeftMin: 220, sidebarLeftMax: 420,
   sidebarRightMin: 260, sidebarRightMax: 480,
   sidebarMaxFraction: 0.45, sidebarResizeStep: 8, sidebarResizeLargeStep: 24,
@@ -12,7 +11,7 @@ export const CONFIG = Object.freeze({
   replySwipeDistance: 64, messageHoldMs: 550, gestureCancelDistance: 12, gesturePreviewDistance: 96, gestureClickSuppressMs: 400, jumpLatestDistance: 180,
   preferencesKey: 'nexus.preferences.v2',
   draftPrefix: 'nexus.draft.',
-  viewStoragePrefix: 'nexus.view.', // Per-account navigation for the current browser tab.
+  viewStoragePrefix: 'nexus.view.', // Durable per-account navigation with independent tab restoration.
   maxMessageLength: 8000,
   maxUploadBytes: 5 * 1024 ** 3,
   maxProfileBytes: 5 * 1024 ** 3,
@@ -36,7 +35,7 @@ export const CONFIG = Object.freeze({
   membersOverlayBreakpoint: 1280,
   discoveryRefreshMs: 15000,
   composerContextMinWidth: 320, // Keep recipient placeholders on one line in narrow composers.
-  composerMinHeight: 50,
+  composerMinHeight: 48,
   composerMaxHeight: 150,
   reactions: ['❤️', '🔥', '🙌', '👀', '😂', '✨', '👍', '🚀'],
 });

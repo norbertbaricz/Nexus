@@ -97,7 +97,9 @@ export class ParticipantAudio {
         destination?.stream.getTracks().forEach(track => track.stop()); this.report(key);
       }
     }
-    let desired = stream, blocked = false;
+    // Do not attach an empty stream before ontrack. Some engines keep that
+    // player waiting until another participant causes a media refresh.
+    let desired = signature ? stream : null, blocked = false;
     if (entry) {
       const level = silenced || setting.muted ? 0 : setting.volume / 100;
       if (entry.level !== level) {

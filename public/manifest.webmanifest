@@ -1,0 +1,16 @@
+{
+  "id": "/",
+  "name": "Nexus",
+  "short_name": "Nexus",
+  "description": "Your world, connected. Communities, messages and voice.",
+  "lang": "en",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#111216",
+  "theme_color": "#111216",
+  "icons": [
+    { "src": "/assets/nexus-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/nexus-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

@@ -19,6 +19,16 @@ const CONFIG = Object.freeze({
   host: process.env.HOST || '127.0.0.1',
   databasePath: path.resolve(process.env.DATABASE_PATH || path.join(__dirname, '../data/nexus.sqlite')),
   uploadPath: path.resolve(process.env.UPLOAD_PATH || path.join(__dirname, '../data/uploads')),
+  // Optional host FFmpeg; original files are never replaced by playback copies.
+  playback: Object.freeze({ enabled:process.env.VIDEO_COMPAT_ENABLED!=='false',executable:process.env.FFMPEG_PATH||'ffmpeg',
+    cachePath:process.env.VIDEO_CACHE_PATH?path.resolve(process.env.VIDEO_CACHE_PATH):null,
+    concurrency:1,queueLimit:8,threads:2,timeoutMs:15*60*1000,probeTimeoutMs:5000,
+    maxOutputBytes:512*1024**2,maxCacheBytes:2*1024**3,minimumFreeBytes:256*1024**2,cacheAgeMs:7*24*60*60*1000,
+    maxSide:1280,fps:30,crf:25,bitrateKbps:2500,pollMs:1000,requestsPerMinute:6,
+    // Persistent backlog stays on disk; only queueLimit jobs enter memory.
+    backfillBatch:32,backfillMs:1000,cooldownMs:250,resourceRetryMs:30000,evictedRetryMs:60000,
+    retryDelaysMs:Object.freeze([60000,15*60*1000]),cacheTouchMs:60000,
+  }),
   publicOrigin: (process.env.PUBLIC_ORIGIN || '').trim(),
   csrfSecret: process.env.CSRF_SECRET || '',
   csrfLifetimeMs: 2 * 60 * 60 * 1000,
@@ -26,6 +36,12 @@ const CONFIG = Object.freeze({
   secureCookies: process.env.SECURE_COOKIES === 'true',
   registrationOpen: process.env.REGISTRATION_OPEN !== 'false',
   giphyApiKey: (process.env.GIPHY_API_KEY || '').trim(),
+  push: Object.freeze({
+    enabled: process.env.PUSH_ENABLED !== 'false', subject: (process.env.PUSH_SUBJECT || '').trim(),
+    ttlSeconds: 300, graceMs: 1500, pollMs: 1000, concurrency: 4, batchSize: 24,
+    queueLimit: 10000, maxDevices: 10, timeoutMs: 8000,
+    retryDelaysMs: Object.freeze([5000, 30000, 60000]), settingsPerMinute: 20, testsPerMinute: 2,
+  }),
   // SMTP is optional. Recovery codes work without an external mail service.
   mail: Object.freeze({
     host: (process.env.MAIL_HOST || '').trim(), port: Number(process.env.MAIL_PORT || 587),

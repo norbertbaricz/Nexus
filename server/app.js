@@ -10,9 +10,12 @@ const { openDatabase, transaction } = require('./database');
 const { changedFields } = require('./audit');
 const { createBadges } = require('./badges');
 const { installPublicAssets } = require('./public-assets');
+const { installPush, PUSH_RULES } = require('./push');
+const { notificationContent } = require('./notification-content');
 const { VERSION } = require('./release');
 const { COOKIE_NAME, hashPassword, checkPassword, normalizeLoginUsername, validPasswordHash, findSession, createSession } = require('./auth');
 const { installUploads } = require('./uploads');
+const { createVideoPlayback } = require('./video-playback');
 const { installLifecycle } = require('./lifecycle');
 const { createMailer } = require('./mailer');
 const { installAccountSecurity } = require('./account-security');
@@ -56,13 +59,14 @@ function imageType(buffer) {
   return null;
 }
 
-function createApp(config, { mailTransport } = {}) {
+function createApp(config, { mailTransport, pushTransport, pushClock, pushAutoStart = true, videoRunner, videoAutoStart = true } = {}) {
   const app = express();
   const db = openDatabase(config.databasePath);
   const requestSecurity = createRequestSecurity(config);
   const mailer = createMailer(config,mailTransport);
   const badges = createBadges(db, config);
   fs.mkdirSync(config.uploadPath, { recursive: true });
+  const videoPlayback=createVideoPlayback({db,config,run:videoRunner,autoStart:videoAutoStart});
   // Badges use immutable account IDs; display names never grant privileges.
   let creatorId = db.prepare("SELECT value FROM app_settings WHERE key='creatorUserId'").get()?.value || '';
   if (!creatorId) {
@@ -126,6 +130,8 @@ function createApp(config, { mailTransport } = {}) {
       db.prepare('SELECT hash FROM account_tokens LIMIT 1').get();
       db.prepare('SELECT hash FROM recovery_codes LIMIT 1').get();
       db.prepare('SELECT hash FROM support_recovery_tokens LIMIT 1').get();
+      db.prepare('SELECT id FROM push_subscriptions LIMIT 1').get();
+      db.prepare('SELECT id FROM push_outbox LIMIT 1').get();
       res.json({ ok: true, database: 'ready', buildId: publicAssets.buildId, protocol: 1, version: VERSION });
     } catch (error) {
       if (error.status && error.status < 500) throw error;
@@ -284,11 +290,14 @@ function createApp(config, { mailTransport } = {}) {
   }
   function publishMessage(message,event) {
     const root=message.threadId&&db.prepare('SELECT authorId FROM messages WHERE id=?').get(message.threadId),plain=[];
+    const notificationPolicy=db.prepare('SELECT s.defaultNotifications FROM channels c JOIN servers s ON s.id=c.serverId WHERE c.id=?').get(message.conversationId)?.defaultNotifications || 'all';
+    const notification=event==='message:new'?notificationContent(db,message):undefined;
+    const hydrate=viewerId=>({...hydratedMessage(message,viewerId),notificationPolicy,...(notification?{notification}:{})});
     for(const userId of recipients(message.conversationId)) {
       if(!activeUsers.get(userId)?.size||social.isBlocked(userId,message.authorId)||root&&social.isBlocked(userId,root.authorId))continue;
-      if(!social.ids(userId).length)plain.push(userId);else emitUsers([userId],event,hydratedMessage(message,userId));
+      if(!social.ids(userId).length)plain.push(userId);else emitUsers([userId],event,hydrate(userId));
     }
-    if(plain.length)emitUsers(plain,event,hydratedMessage(message));
+    if(plain.length)emitUsers(plain,event,hydrate());
   }
   function joinConversationRooms(userId, conversationId) {
     try { access(conversationId, userId); } catch { return; }
@@ -308,8 +317,10 @@ function createApp(config, { mailTransport } = {}) {
     emitUsers([ownerId],'blocks:updated',{}); updateWorkspace([ownerId,targetId]);
     for (const conversationId of new Set([...first,...second].map(peer=>peer.conversationId))) publishVoice(conversationId);
   }});
-  const community = installCommunity(app, { db, config, auth, HttpError, id, now, text, member, owner, permission, hasPermission, serverUsers, refreshServerAccess, updateWorkspace, refreshUserBadges, getIO: () => io, voice, leaveVoice });
+  const community = installCommunity(app, { onFileRemoved:id=>videoPlayback.invalidate(id), db, config, auth, HttpError, id, now, text, member, owner, permission, hasPermission, serverUsers, refreshServerAccess, updateWorkspace, refreshUserBadges, getIO: () => io, voice, leaveVoice });
   const accountPreferences=installPreferences(app,{db,auth,HttpError,emitUsers});
+  const push=installPush(app,{db,config,auth,HttpError,limit,access,social,transport:pushTransport,clock:pushClock,start:pushAutoStart,
+  });
   const pins=installPins(app,{db,auth,access,recipients,activeUsers,emitUsers,HttpError});
   app.get('/api/gifs', auth, (req, res) => res.json({ gifs: GIFS }));
   function clientIceServers(userId) {
@@ -324,6 +335,7 @@ function createApp(config, { mailTransport } = {}) {
     version: VERSION, clientBuild: publicAssets.buildId,
     csrfToken: requestSecurity.issueToken(req, res),
     passwordRecovery: { emailAvailable: mailer.available, codeCount: config.recovery?.codeCount || 8 },
+    webPush: req.userId ? push.status() : { configured: false },
     registrationOpen: config.registrationOpen, minPasswordLength: config.minPasswordLength, maxMessageLength: config.maxMessageLength,
     maxUploadBytes: config.maxUploadBytes, maxProfileBytes: config.maxProfileBytes, maxServerImageBytes: config.maxServerImageBytes,
     uploadChunkBytes: config.uploadChunkBytes, idleAfterMs: config.idleAfterMs, creatorUsername: config.creatorUsername, creatorClaimAvailable: !creatorId && Boolean(config.creatorClaimToken),
@@ -382,7 +394,7 @@ function createApp(config, { mailTransport } = {}) {
   const accountSecurity = installAccountSecurity(app, { db, config, auth, HttpError, limit, checkPassword, hashPassword, mailer,
     revokeSessions(userId) { for (const socket of io?.sockets.sockets.values() || []) if (socket.userId===userId) { socket.emit('session:expired');socket.disconnect(true); } },
   });
-  installLifecycle(app, { db, config, auth, HttpError, checkPassword, COOKIE_NAME, limit, owner, serverUsers, relatedUsers, updateWorkspace, refreshUserBadges, getIO: () => io, voice, leaveVoice, onCreatorDeleted: () => { creatorId = ''; }, onAccountDeleted: userId => { social.clearCache();for(const key of recentMessages.keys())if(key.startsWith(`${userId}:`))recentMessages.delete(key); } });
+  installLifecycle(app, { db, config, onFileRemoved:id=>videoPlayback.invalidate(id), auth, HttpError, checkPassword, COOKIE_NAME, limit, owner, serverUsers, relatedUsers, updateWorkspace, refreshUserBadges, getIO: () => io, voice, leaveVoice, onCreatorDeleted: () => { creatorId = ''; }, onAccountDeleted: userId => { social.clearCache();for(const key of recentMessages.keys())if(key.startsWith(`${userId}:`))recentMessages.delete(key); } });
   app.get('/api/bootstrap', auth, (req, res) => {
     const servers = db.prepare(`SELECT s.*, m.role FROM servers s JOIN members m ON m.serverId = s.id
       WHERE m.userId = ? ORDER BY s.createdAt, s.id`).all(req.userId).map(server => ({
@@ -711,7 +723,7 @@ function createApp(config, { mailTransport } = {}) {
       db.prepare('DELETE FROM pin_reads WHERE conversationId=?').run(channel.id);db.prepare('DELETE FROM pin_counters WHERE conversationId=?').run(channel.id);
       db.prepare('DELETE FROM channels WHERE id = ?').run(channel.id);
     });
-    for (const file of files) fs.rmSync(path.join(config.uploadPath, file.diskName), { force: true });
+    for (const file of files) {videoPlayback.invalidate(file.id||file.diskName);fs.rmSync(path.join(config.uploadPath,file.diskName),{force:true});}
     community.audit(channel.serverId,req.userId,'channel.deleted',channel.id,'',{targetName:channel.name});
     io?.to(room(channel.id)).emit('conversation:deleted', { id: channel.id, serverId: channel.serverId });
     io?.in(room(channel.id)).socketsLeave(room(channel.id));
@@ -828,6 +840,7 @@ function createApp(config, { mailTransport } = {}) {
       db.prepare('INSERT INTO messages (id, conversationId, authorId, text, attachments, replyTo, createdAt,mentions,threadId) VALUES (?, ?, ?, ?, ?, ?, ?,?,?)')
         .run(messageId, req.params.id, req.userId, body, JSON.stringify(storedAttachments), replyTo, now(), JSON.stringify(mentions), threadId);
       for (const attachment of attachments) db.prepare('UPDATE files SET conversationId = ? WHERE id = ?').run(req.params.id, attachment.id);
+      push.enqueue(db.prepare('SELECT * FROM messages WHERE id=?').get(messageId));
     });
     const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(messageId);
     const message = hydratedMessage(row,req.userId);
@@ -857,7 +870,7 @@ function createApp(config, { mailTransport } = {}) {
       db.prepare('DELETE FROM messages WHERE id = ?').run(message.id);
       for (const attachment of deletedAttachments) {
         db.prepare('DELETE FROM files WHERE id = ?').run(attachment.id);
-        fs.rmSync(path.join(config.uploadPath, attachment.id), { force: true });
+        videoPlayback.invalidate(attachment.id);fs.rmSync(path.join(config.uploadPath,attachment.id),{force:true});
       }
     });
     io?.to(room(message.conversationId)).emit('message:deleted', { id: message.id, conversationId: message.conversationId });
@@ -882,11 +895,11 @@ function createApp(config, { mailTransport } = {}) {
     transaction(db,()=>{const revision=message.pinned?message.pinRevision:pins.next(message.conversationId);db.prepare('UPDATE messages SET pinned=?,pinRevision=? WHERE id=?').run(message.pinned?0:1,revision,message.id);});
     broadcastMessage(message.id);pins.notify(message.conversationId);res.json({ok:true,pins:pins.state(message.conversationId,req.userId)});
   });
-  const closeUploads = installUploads(app, { db, config, auth, permission, HttpError, id, now, imageType, PROFILE_IMAGE_TYPES, limit, text });
+  const closeUploads = installUploads(app, { db, config, onFileCommitted:file=>videoPlayback.enqueue(file), onFileRemoved:id=>videoPlayback.invalidate(id), auth, permission, HttpError, id, now, imageType, PROFILE_IMAGE_TYPES, limit, text });
   // Search can display assigned artwork before a DM or shared server exists.
   const assignedProfileImage = db.prepare('SELECT 1 FROM users WHERE id = ? AND (avatar = ? OR banner = ?)');
 
-  app.get('/files/:id', (req, res) => {
+  function readableFile(req) {
     const session = findSession(db, req.headers.cookie);
     if (!session) throw new HttpError(401, 'Sign in to download files.');
     limit(`download:${session.userId}`, config.downloadsPerMinute);
@@ -913,14 +926,23 @@ function createApp(config, { mailTransport } = {}) {
       if(download && PROFILE_IMAGE_TYPES.has(file.mime) && !['dm','media'].includes(conversation.type))throw new HttpError(403,'Image downloads are available only in DMs and media galleries.');
       if(conversation.serverId && (download || !/^image\/|^video\/|^audio\//.test(file.mime)))permission(conversation.serverId,session.userId,'downloadFiles');
     }
+    return file;
+  }
+  app.get('/api/files/:id/playback',auth,async(req,res)=>{const file=readableFile(req);if(file.purpose!=='attachment'||!file.mime.startsWith('video/'))throw new HttpError(400,'Choose a video attachment.');res.set('Cache-Control','no-store').json(await videoPlayback.snapshot(file));});
+  app.post('/api/files/:id/playback',auth,async(req,res)=>{const file=readableFile(req);if(file.purpose!=='attachment'||!file.mime.startsWith('video/'))throw new HttpError(400,'Choose a video attachment.');limit(`video-prepare:${req.userId}`,config.playback?.requestsPerMinute||6);res.set('Cache-Control','no-store').json(await videoPlayback.start(file));});
+  app.get('/files/:id',async(req,res)=>{
+    const file=readableFile(req),download=req.query.download==='1';
     if(req.query.info==='1')return res.json({url:`/files/${file.id}?download=1`,name:file.name,size:file.size});
-    res.set({ 'Cache-Control': 'private, no-store', 'Content-Type': file.mime,
+    const compatible=req.query.variant==='compat';
+    const filename=compatible?await videoPlayback.readyPath(file):path.join(config.uploadPath,file.diskName);
+    if(!filename)throw new HttpError(409,'The video is still being prepared.');
+    res.set({ 'Cache-Control': 'private, no-store', 'Content-Type': compatible?'video/mp4':file.mime,
       'Content-Disposition': `${!download && (PROFILE_IMAGE_TYPES.has(file.mime) || /^video\/|^audio\//.test(file.mime)) ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(file.name)}` });
-    res.sendFile(path.join(config.uploadPath, file.diskName));
+    res.sendFile(filename);
   });
   app.use('/api', (req, res) => res.status(404).json({ error: 'Endpoint not found.' }));
   const publicDirectory = path.join(__dirname, '../public');
-  const publicAssets = installPublicAssets(app, publicDirectory);
+  const publicAssets = installPublicAssets(app, publicDirectory, { publicOrigin: config.publicOrigin });
   app.use(express.static(publicDirectory, { index: false, maxAge: 0, dotfiles: 'deny' }));
   app.get('/{*path}', publicAssets.sendIndex);
   app.use((error, req, res, next) => {
@@ -981,7 +1003,8 @@ function createApp(config, { mailTransport } = {}) {
       }
       on('presence:activity', payload => {
         const before = getUser(socket.userId)?.status;
-        activities.set(socket.id, { userId:socket.userId, at: Date.now(), away: payload.away === true });
+        activities.set(socket.id, { userId:socket.userId, at: Date.now(), away: payload.away === true,
+          notificationDevice:typeof payload.notificationDevice==='string'&&PUSH_RULES.devicePattern.test(payload.notificationDevice)?payload.notificationDevice:'',foreground:payload.foreground===true });
         const user = getUser(socket.userId);
         if (before !== user.status) emitUsers(relatedUsers(socket.userId), 'user:updated', user);
       });
@@ -1017,6 +1040,7 @@ function createApp(config, { mailTransport } = {}) {
         if(conversation.serverId && payload.sharing)permission(conversation.serverId,socket.userId,'shareScreen');
         if (!current.stageSpeaker && (payload.muted === false || payload.camera || payload.sharing)) throw new HttpError(403, 'Only stage hosts can speak or share media.');
         for (const key of ['muted', 'deafened', 'camera', 'sharing']) if (typeof payload[key] === 'boolean') current[key] = payload[key];
+        if(current.deafened||!current.canSpeak)current.muted=true;
         publishVoice(current.conversationId);
       });
       on('rtc:signal', payload => {
@@ -1048,7 +1072,7 @@ function createApp(config, { mailTransport } = {}) {
     });
     return io;
   }
-  return { app, db, mailer, accountSecurity, buildId: publicAssets.buildId, attachRealtime, close() { clearInterval(cleanup); closeUploads(); mailer.close(); db.close(); } };
+  return { app, db, mailer, accountSecurity, push, buildId: publicAssets.buildId, attachRealtime, close() { clearInterval(cleanup); closeUploads(); videoPlayback.close(); mailer.close(); push.close(); db.close(); } };
 }
 
 module.exports = { createApp };

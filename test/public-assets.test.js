@@ -95,3 +95,34 @@ test('unknown builds, missing modules and private paths never fall back to app H
   }
   const malformed = await fetch(service.base + service.prefix + '/%E0%A4%A'); assert.equal(malformed.status, 400);
 });
+
+test('client modules negotiate precompressed transfer without mixing encodings or validators', async t => {
+  const fixture = workspace(t), source = 'export const content = ' + JSON.stringify('Nexus interface payload '.repeat(300)) + ';';
+  fs.writeFileSync(path.join(fixture.directory, 'large.js'), source);
+  const service = await fixture.start(), url = service.base + service.prefix + '/large.js';
+  const variants = new Map();
+  for (const encoding of ['br', 'gzip', 'identity']) {
+    const response = await fetch(url, { headers: { 'Accept-Encoding': encoding } });
+    assert.equal(response.status, 200); assert.equal(response.headers.get('content-encoding'), encoding === 'identity' ? null : encoding);
+    assert.match(response.headers.get('vary'), /Accept-Encoding/); assert.equal(await response.text(), source);
+    variants.set(encoding, { etag: response.headers.get('etag'), bytes: Number(response.headers.get('content-length')) });
+    assert.equal((await fetch(url, { headers: { 'Accept-Encoding': encoding, 'If-None-Match': variants.get(encoding).etag, 'Cache-Control':'max-age=0' } })).status, 304);
+  }
+  assert.equal(new Set([...variants.values()].map(value => value.etag)).size, 3);
+  for (const encoding of ['br', 'gzip']) assert.ok(variants.get(encoding).bytes < variants.get('identity').bytes / 2);
+  const switched = await fetch(url, { headers: { 'Accept-Encoding': 'br', 'If-None-Match': variants.get('gzip').etag } });
+  assert.equal(switched.status, 200); assert.equal(await switched.text(), source);
+  const weighted = await fetch(url, { headers: { 'Accept-Encoding': 'br;q=0.5, gzip;q=1, identity;q=0' } }); assert.equal(weighted.headers.get('content-encoding'), 'gzip');
+  const none = await fetch(url, { headers: { 'Accept-Encoding': 'br;q=0,gzip;q=0,identity;q=0' } }); assert.equal(none.status, 406);
+});
+
+test('push worker has a direct root URL, no-store updates and a build boundary without entering the app module graph', async t => {
+  const fixture = workspace(t), filename = path.join(fixture.directory, 'service-worker.js');
+  fs.writeFileSync(filename, 'self.addEventListener("push",()=>{});'); const first = await fixture.start();
+  const response = await fetch(first.base + '/service-worker.js', { redirect: 'manual' });
+  assert.equal(response.status, 200); assert.equal(response.headers.get('location'), null); assert.equal(response.headers.get('service-worker-allowed'), '/'); assert.equal(response.headers.get('cache-control'), 'no-store'); assert.match(response.headers.get('content-type'), /javascript/);
+  assert.equal((await fetch(first.base + first.prefix + '/service-worker.js')).status, 404);
+  assert.equal((await fetch(first.base + '/service-worker.js', { method: 'POST' })).status, 405);
+  fs.writeFileSync(filename, 'self.addEventListener("push",()=>{ /* updated */ });'); const second = await fixture.start();
+  assert.notEqual(first.buildId, second.buildId); assert.ok((await (await fetch(second.base + '/service-worker.js')).text()).includes('updated'));
+});

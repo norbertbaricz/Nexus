@@ -103,7 +103,7 @@ function installCommunity(app, ctx) {
     const users = db.prepare('SELECT userId FROM participants WHERE conversationId=?').all(req.params.id).map(row => row.userId), files = db.prepare('SELECT diskName FROM files WHERE conversationId=?').all(req.params.id);
     for (const socket of getIO()?.sockets.sockets.values() || []) if (voice.get(socket.id)?.conversationId === req.params.id) { socket.emit('voice:removed', { conversationId: req.params.id, reason: 'This conversation was deleted.' }); leaveVoice(socket); }
     transaction(db, () => { db.prepare('DELETE FROM messages WHERE conversationId=?').run(req.params.id); db.prepare('DELETE FROM files WHERE conversationId=?').run(req.params.id); db.prepare('DELETE FROM reads WHERE conversationId=?').run(req.params.id); db.prepare('DELETE FROM pin_reads WHERE conversationId=?').run(req.params.id); db.prepare('DELETE FROM pin_counters WHERE conversationId=?').run(req.params.id); db.prepare('DELETE FROM conversations WHERE id=?').run(req.params.id); });
-    for (const file of files) fs.rmSync(path.join(config.uploadPath, file.diskName), { force: true });
+    for (const file of files) {ctx.onFileRemoved?.(file.id||file.diskName);fs.rmSync(path.join(config.uploadPath,file.diskName),{force:true});}
     getIO()?.to(`conversation:${req.params.id}`).emit('conversation:deleted', { id: req.params.id }); getIO()?.in(`conversation:${req.params.id}`).socketsLeave(`conversation:${req.params.id}`); updateWorkspace(users); res.json({ ok: true });
   });
   return { activeModeration, checkBan, checkMute, audit };

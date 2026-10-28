@@ -5,7 +5,7 @@ const { transaction } = require('./database');
 
 // Destructive work is committed atomically in SQLite; disk bytes are removed after commit.
 function installLifecycle(app, ctx) {
-  const { db, config, auth, HttpError, checkPassword, COOKIE_NAME, limit, owner, serverUsers, relatedUsers, updateWorkspace, getIO, voice, leaveVoice, onCreatorDeleted, onAccountDeleted } = ctx;
+  const { db, config, auth, HttpError, checkPassword, COOKIE_NAME, limit, owner, serverUsers, relatedUsers, updateWorkspace, getIO, voice, leaveVoice, onFileRemoved, onCreatorDeleted, onAccountDeleted } = ctx;
   const conversationFiles = conversationId => db.prepare('SELECT diskName FROM files WHERE conversationId=?').all(conversationId).map(file=>file.diskName);
   function clearConversation(conversationId) {
     db.prepare('DELETE FROM messages WHERE conversationId=?').run(conversationId);
@@ -28,6 +28,7 @@ function installLifecycle(app, ctx) {
   }
   function removeBytes(files) {
     for (const file of new Set(files)) {
+      onFileRemoved?.(file);
       try { fs.rmSync(path.join(config.uploadPath,file),{force:true}); }
       catch (error) { console.error('[Nexus] Failed to remove deleted file:', file, error); }
     }

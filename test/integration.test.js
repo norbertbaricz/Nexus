@@ -607,13 +607,14 @@ test('live blocking stops existing media peers, denies signaling and hides incom
 test('external GIF references are restricted to provider media, respect attachments permissions and survive reload',async()=>{
   const account=await register('gif_sender');const created=(await api('/api/servers',{cookie:account.cookie,method:'POST',body:{name:'GIF validation'}})).data;
   const space=(await api('/api/bootstrap',{cookie:account.cookie})).data.servers.find(item=>item.id===created.id),channel=space.channels.find(item=>item.type==='text');
-  const gif={provider:'giphy',providerId:'Abc123',url:'https://media2.giphy.com/media/v1.safe/Abc123/giphy.gif?cid=fixture',title:'Sample GIF'};
+  const gif={provider:'giphy',providerId:'Abc123',url:'https://media2.giphy.com/media/v1.safe/Abc123/giphy.gif?cid=fixture',title:'Sample GIF',still:'https://media2.giphy.com/media/Abc123/200_s.gif?cid=fixture'};
   const send=providerGifs=>api(`/api/conversations/${channel.id}/messages`,{cookie:account.cookie,method:'POST',body:{providerGifs}});
   for(const url of ['https://evil.example/media/Abc123/giphy.gif','https://media.giphy.com.evil.example/media/Abc123/giphy.gif','http://media.giphy.com/media/Abc123/giphy.gif','https://media.giphy.com/media/Other/giphy.gif','https://media.giphy.com/media/Abc123/script.svg','https://media.giphy.com:444/media/Abc123/giphy.gif','https://user:pass@media.giphy.com/media/Abc123/giphy.gif'])assert.equal((await send([{...gif,url}])).status,400);
   assert.equal((await send(Array(5).fill(gif))).status,400);
+  for(const still of ['https://evil.example/media/Abc123/200_s.gif','https://media2.giphy.com/media/Other/200_s.gif','https://media2.giphy.com/media/Abc123/200.gif'])assert.equal((await send([{...gif,still}])).status,400);
   const sent=await send([gif]);assert.equal(sent.status,201);assert.equal(sent.data.message.attachments[0].url,gif.url);
   const history=(await api(`/api/conversations/${channel.id}/messages`,{cookie:account.cookie})).data.messages;
-  assert.equal(history[0].attachments[0].provider,'giphy');assert.equal(history[0].attachments[0].name,'Sample GIF');
+  assert.equal(history[0].attachments[0].provider,'giphy');assert.equal(history[0].attachments[0].name,'Sample GIF');assert.equal(history[0].attachments[0].still,gif.still);
   assert.equal((await api('/api/config')).data.giphyApiKey,'');
   assert.equal((await api('/api/config',{cookie:account.cookie})).data.giphyApiKey,'disposable-public-web-key');
   const member=await register('gif_member');await api('/api/servers/join',{cookie:member.cookie,method:'POST',body:{invite:space.invite}});
@@ -1033,8 +1034,8 @@ test('the production page serves matching CSS and its complete website module gr
  assert.equal(page.headers.get('cache-control'),'no-store');assert.match(buildId,/^[a-f0-9]{20}$/);
  const prefix=`/client/${buildId}/`,entries=[...html.matchAll(/<script type="module" src="([^"]+)"/g)].map(match=>match[1]),styles=[...html.matchAll(/rel="stylesheet" href="([^"]+)"/g)].map(match=>match[1]),style=styles[0];
  assert.deepEqual(entries,[prefix+'app.js']);assert.deepEqual(styles,[prefix+'styles.css']);
- assert.ok(html.includes('name="nexus-version" content="2.23.0"'));assert.ok(html.includes(`name="nexus-build" content="${buildId}"`));assert.equal(html.includes('native-boot'),false);
- const health=await api('/api/health');assert.equal(health.data.version,'2.23.0');assert.equal(health.data.buildId,buildId);
+ assert.ok(html.includes(`name="nexus-version" content="${require('../package.json').version}"`));assert.ok(html.includes(`name="nexus-build" content="${buildId}"`));assert.equal(html.includes('native-boot'),false);
+ const health=await api('/api/health');assert.equal(health.data.version,require('../package.json').version);assert.equal(health.data.buildId,buildId);
  for(const url of styles){const response=await fetch(base+url);assert.equal(response.status,200);assert.equal(response.headers.get('x-nexus-build'),buildId);}
  const stylesheet=await fetch(base+style);assert.equal(stylesheet.status,200);assert.equal(stylesheet.headers.get('x-nexus-build'),buildId);
  assert.ok((await stylesheet.text()).includes('.viewer-close'));
@@ -1111,7 +1112,7 @@ test('blocking in either direction hides current profile images as well as peopl
 });
 
 test('readiness verifies database reads and identifies the exact served UI build without user data',async()=>{
-  const response=await api('/api/ready'); assert.equal(response.status,200); assert.equal(response.data.ok,true); assert.equal(response.data.database,'ready'); assert.equal(response.data.protocol,1); assert.equal(response.data.version,'2.23.0');
+  const response=await api('/api/ready'); assert.equal(response.status,200); assert.equal(response.data.ok,true); assert.equal(response.data.database,'ready'); assert.equal(response.data.protocol,1); assert.equal(response.data.version,require('../package.json').version);
   assert.match(response.data.buildId,/^[a-f0-9]{20}$/); assert.equal(response.headers.get('cache-control'),'no-store');
   const html=await fetch(base+'/'); assert.equal(html.headers.get('x-nexus-build'),response.data.buildId);
   assert.deepEqual(Object.keys(response.data).sort(),['buildId','database','ok','protocol','version']);
@@ -1119,4 +1120,17 @@ test('readiness verifies database reads and identifies the exact served UI build
   instance.db.exec('ALTER TABLE app_settings RENAME TO readiness_test_settings');
   try { const unavailable=await api('/api/ready',{cookie:alice.cookie}); assert.equal(unavailable.status,503); assert.deepEqual(unavailable.data,{ok:false,database:'unavailable',protocol:1}); assert.equal(unavailable.headers.get('cache-control'),'no-store'); }
   finally { instance.db.exec('ALTER TABLE readiness_test_settings RENAME TO app_settings'); }
+});
+
+test('deafen publishes both audio states and joining a muted peer does not change existing members',async()=>{
+ const owner=await register('deafen_owner'),guest=await register('deafen_guest'),third=await register('deafen_third');
+ const made=(await api('/api/servers',{cookie:owner.cookie,method:'POST',body:{name:'Independent audio state'}})).data.id;
+ const space=(await api('/api/bootstrap',{cookie:owner.cookie})).data.servers.find(s=>s.id===made),roomId=space.channels.find(c=>c.type==='voice').id;
+ for(const member of [guest,third])await api('/api/servers/join',{cookie:member.cookie,method:'POST',body:{invite:space.invite}});
+ const a=await connect(owner.cookie),b=await connect(guest.cookie),c=await connect(third.cookie);await a.emit('voice:join',{conversationId:roomId});await b.emit('voice:join',{conversationId:roomId});
+ const changed=a.wait('voice:state',value=>value.participants.some(p=>p.userId===guest.id&&p.deafened));await b.emit('voice:update',{deafened:true,muted:false});const state=await changed;
+ assert.equal(state.participants.find(p=>p.userId===guest.id).muted,true);assert.equal(state.participants.find(p=>p.userId===owner.id).muted,false);
+ const arrival=a.wait('voice:state',value=>value.participants.length===3);await c.emit('voice:join',{conversationId:roomId,muted:true});const members=(await arrival).participants;
+ assert.equal(members.find(p=>p.userId===owner.id).muted,false);assert.equal(members.find(p=>p.userId===guest.id).deafened,true);assert.equal(members.find(p=>p.userId===third.id).muted,true);
+ for(const client of [a,b,c])await client.emit('voice:leave');
 });

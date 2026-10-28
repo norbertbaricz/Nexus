@@ -27,3 +27,11 @@ External media remains hosted by GIPHY and may disappear if the provider removes
 Automated checks cover query encoding, pagination, preview/reference mapping, empty/rate-limit/cancel states, authenticated configuration, URL validation, persistence and channel attachment restrictions. The missing-key UI was checked in the browser. No live production key was provided, so provider availability, account approval and real quota remain to be verified by the hosting operator.
 
 Primary integration documentation: [GIPHY API](https://developers.giphy.com/docs/api/) and [integration requirements](https://developers.giphy.com/docs/).
+
+## Picker focus and emoji search
+
+Touch opening of GIFs or emoji keeps the current message editor focused. Tap either search field to type a query. Category/result buttons and Load more retain the active text input; selecting a result returns directly to the composer without an intermediate body focus. Keyboard users can enter the search directly from the opener. Picker height is bounded by the visible viewport, including a phone keyboard.
+
+Emoji search runs locally across all 1,175 unique symbols already in Nexus. It accepts character descriptions, categories, glyphs and common aliases. A lazy cached catalog avoids creating every emoji button on page entry. Search output is capped at 96 matches; empty search retains category browsing. No external emoji search service or new runtime dependency is used.
+
+`public/pickers.js` exposes `EMOJI_SEARCH_CONFIG` for query and result limits. Existing GIF key, provider attribution, URL validation, paging, spoilers and upload policy remain unchanged.

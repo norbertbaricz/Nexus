@@ -1,61 +1,64 @@
 import { CONFIG } from './config.js';
 import { icon } from './icons.js';
+import { viewportFrame } from './viewport.js';
 
-// Choose one clear gap per visible batch; scrolling never changes its anchor.
-export const NOTICE_CONFIG = Object.freeze({ width: 360, edge: 12, minimumWidth: 200, controlGap: 4, titleClearance: 96 });
+// Anchor above fixed footer surfaces, never search for gaps in scrollable content.
+export const NOTICE_CONFIG = Object.freeze({ width:360, edge:12, modalFooterClearance:80, minimumHeight:44, maxStackHeight:200 });
 export class Notices {
   constructor(root) {
-    this.root=root;this.timers=new WeakMap();this.items=new Map();this.anchor=null;this.positionFrame=0;this.resetPending=false;
+    this.root=root;this.timers=new WeakMap();this.items=new Map();this.positionFrame=0;this.lastFrame=null;
     root.setAttribute('aria-label','Notifications');document.documentElement.style.setProperty('--notice-height','0px');
     if(typeof ResizeObserver!=='undefined'){this.observer=new ResizeObserver(()=>this.schedule());this.observer.observe(root);}
-    const contextChanged=()=>{if(this.root.children.length&&this.anchor?.scope!==this.context().scope)this.schedule(true);};
+    const contextChanged=()=>{if(this.root.children.length)this.schedule();};
     this.modalObserver=new MutationObserver(contextChanged);
     const modals=document.querySelector('#modal-root');if(modals)this.modalObserver.observe(modals,{childList:true,subtree:true});
     this.bodyObserver=new MutationObserver(contextChanged);this.bodyObserver.observe(document.body,{childList:true});
+    const app=document.querySelector('#app');if(app)this.bodyObserver.observe(app,{attributes:true,attributeFilter:['class']});
     window.addEventListener('resize',()=>this.schedule(true));
     window.visualViewport?.addEventListener('resize',()=>this.schedule(true));
     window.visualViewport?.addEventListener('scroll',()=>this.schedule());
   }
   context() {
-    const viewport=window.visualViewport,width=viewport?.width||window.innerWidth,height=viewport?.height||window.innerHeight;
-    const top=viewport?.offsetTop||0,left=viewport?.offsetLeft||0;
+    const viewport=window.visualViewport,frame=viewportFrame({layoutHeight:window.innerHeight,visual:viewport,previous:this.lastFrame});this.lastFrame=frame;
+    const zoomed=Math.abs((viewport?.scale||1)-1)>.02;
+    const width=Math.min(window.innerWidth,viewport?.width||window.innerWidth),height=frame.height.endsWith('px')?parseFloat(frame.height):viewport?.height||window.innerHeight;
+    const top=zoomed?viewport?.offsetTop||0:parseFloat(frame.top),left=viewport?.offsetLeft||0,edge=NOTICE_CONFIG.edge;
     const modal=document.querySelector('#dialog-guard-root .confirmation-dialog')||document.querySelector('#artwork-editor-root .artwork-dialog')||document.querySelector('#modal-root .modal');
-    const sidebar=document.querySelector('#sidebar'),side=sidebar?.getBoundingClientRect(),inSidebar=!modal&&width>CONFIG.mobileBreakpoint&&side?.width>0;
-    return {width,height,top,left,side,inSidebar,scope:modal||(inSidebar?sidebar:document.querySelector('#app'))};
-  }
-  schedule(reset=false) {
-    if(!this.root.children.length)return;
-    this.resetPending ||= reset;
-    if(this.positionFrame)return;
-    this.positionFrame=requestAnimationFrame(()=>{this.positionFrame=0;const reset=this.resetPending;this.resetPending=false;this.resize(reset);});
-  }
-  resize(reset=false) {
-    if(!this.root.children.length){this.anchor=null;return;}
-    const layout=this.context(),{width,height,top,side,inSidebar,scope}=layout,edge=NOTICE_CONFIG.edge;
-    if(reset||this.anchor?.scope!==scope||this.anchor?.width!==width||this.anchor?.height!==height)this.anchor=null;
-    const available=Math.max(1,width-edge*2);
-    let noticeWidth=Math.min(NOTICE_CONFIG.width,available),left=layout.left+(width-noticeWidth)/2;
-    if(inSidebar){noticeWidth=Math.min(available,Math.max(Math.min(NOTICE_CONFIG.minimumWidth,available),Math.min(noticeWidth,side.width-edge*2)));left=side.left+edge;}
-    if(this.anchor?.compact){noticeWidth=Math.min(noticeWidth,Math.max(Math.min(NOTICE_CONFIG.minimumWidth,available),width-NOTICE_CONFIG.titleClearance));left=layout.left+edge;}
-    left=Math.max(layout.left+edge,Math.min(left,layout.left+width-edge-noticeWidth));
-    this.root.style.width=`${noticeWidth}px`;this.root.style.left=`${left}px`;this.root.style.right='auto';
-    let toastHeight=this.root.getBoundingClientRect().height;
-    const upper=top+edge;let lower=Math.max(upper,top+height-edge-toastHeight);
-    if(!this.anchor) {
-      const controls=[...(scope?.querySelectorAll('button:not([disabled]),input:not([type=hidden]),textarea,a[href],summary,label:has(input[type=checkbox])')||[])].map(node=>node.getBoundingClientRect()).filter(box=>box.width&&box.height&&box.right>left&&box.left<left+noticeWidth&&box.bottom>top&&box.top<top+height);
-      const candidates=[lower,...controls.flatMap(box=>[box.top-toastHeight-edge,box.bottom+edge])].filter(y=>y>=upper&&y<=lower).sort((a,b)=>b-a);
-      const free=candidates.find(y=>controls.every(box=>y+toastHeight<=box.top-NOTICE_CONFIG.controlGap||y>=box.bottom+NOTICE_CONFIG.controlGap));
-      // Dense short screens use the title margin. Keep that choice until dismissal.
-      if(free===undefined){noticeWidth=Math.min(noticeWidth,Math.max(Math.min(NOTICE_CONFIG.minimumWidth,available),width-NOTICE_CONFIG.titleClearance));this.root.style.width=`${noticeWidth}px`;this.root.style.left=`${layout.left+edge}px`;toastHeight=this.root.getBoundingClientRect().height;lower=Math.max(upper,top+height-edge-toastHeight);}
-      const chosen=free??upper;
-      this.anchor={scope,width,height,compact:free===undefined,bottomGap:top+height-chosen-toastHeight};
+    const auth=document.querySelector('#auth-screen'),sidebar=document.querySelector('#sidebar'),side=sidebar?.getBoundingClientRect(),inSidebar=!modal&&!auth&&side?.width>0&&width<=CONFIG.mobileBreakpoint&&Boolean(document.querySelector('#app.sidebar-open'));
+    let bottom=top+height,noticeWidth=Math.min(NOTICE_CONFIG.width,width-edge*2),anchorLeft=left+width-edge-noticeWidth;
+    if(modal){const box=modal.getBoundingClientRect();
+      // Prefer the free space below a centered dialog, never its action row.
+      const stackHeight=Math.min(NOTICE_CONFIG.maxStackHeight,Math.max(NOTICE_CONFIG.minimumHeight,this.root.getBoundingClientRect().height));
+      if(top+height-box.bottom>=Math.max(NOTICE_CONFIG.modalFooterClearance,stackHeight+edge))bottom=top+height;
+      else{noticeWidth=Math.min(noticeWidth,Math.max(1,box.width-edge*2));anchorLeft=box.left+(box.width-noticeWidth)/2;const actions=modal.querySelector?.('.confirmation-actions')?.getBoundingClientRect();bottom=Math.min(bottom,box.bottom-NOTICE_CONFIG.modalFooterClearance,actions?.top||Infinity);}
     }
-    const position=Math.max(upper,Math.min(lower,top+height-this.anchor.bottomGap-toastHeight));
+    else if(!auth) {
+      const nodes=inSidebar?[document.querySelector('#sidebar > .call-dock:not([hidden])'),document.querySelector('#sidebar > .user-bar')]:[...document.querySelectorAll('#main > .composer-area,#main > .read-only-composer,#main > .moderation-notice,#main > .voice-view > .voice-footer,#app > .call-dock:not([hidden])')];
+      if(inSidebar){noticeWidth=Math.min(noticeWidth,Math.max(1,side.width-edge*2));anchorLeft=side.left+edge;}
+      for(const node of nodes){const box=node?.getBoundingClientRect();if(box?.width&&box.height&&box.top<top+height&&box.bottom>top)bottom=Math.min(bottom,box.top);}
+    }
+    return {width,height,top,left,bottom,noticeWidth,anchorLeft};
+  }
+  schedule() {
+    if(!this.root.children.length)return;
+    if(this.positionFrame)return;
+    this.positionFrame=requestAnimationFrame(()=>{this.positionFrame=0;this.resize();});
+  }
+  resize() {
+    if(!this.root.children.length)return;
+    const {width,height,top,left,bottom,noticeWidth,anchorLeft}=this.context(),edge=NOTICE_CONFIG.edge;
+    const available=Math.max(1,width-edge*2),size=Math.max(1,Math.min(noticeWidth,available));
+    this.root.style.width=`${size}px`;this.root.style.left=`${Math.max(left+edge,Math.min(anchorLeft,left+width-edge-size))}px`;this.root.style.right='auto';
+    const floor=Math.max(top+edge+NOTICE_CONFIG.minimumHeight,Math.min(bottom,top+height)-edge);
+    this.root.style.maxHeight=`${Math.max(NOTICE_CONFIG.minimumHeight,Math.min(NOTICE_CONFIG.maxStackHeight,floor-top-edge))}px`;
+    const toastHeight=this.root.getBoundingClientRect().height;
+    const position=Math.max(top+edge,Math.min(floor-toastHeight,top+height-edge-toastHeight));
     this.root.style.top=`${position}px`;this.root.style.bottom='auto';
   }
   dismiss(node) {
     if(!node)return;clearTimeout(this.timers.get(node));this.items.delete(node.dataset.notice);node.remove();this.resize();
   }
+  dismissAction(action) {for(const node of [...this.root.children])if(node.querySelector(`[data-action="${action}"]`))this.dismiss(node);}
   show(message,error=false,{duration=CONFIG.toastDurationMs,action=null}={}) {
     const key=`${error}:${message}`,existing=this.items.get(key);
     if(existing?.isConnected){clearTimeout(this.timers.get(existing));if(duration>0)this.timers.set(existing,setTimeout(()=>this.dismiss(existing),duration));return existing;}

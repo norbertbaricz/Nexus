@@ -8,6 +8,7 @@ import { CHAT_CONFIG, CHANNEL_TYPES, isVoice, isForum, isCollection, mentionMatc
 import { activeTimeout, remainingTime } from './moderation.js';
 import { CONFIG } from './config.js';
 import { syncMarkup } from './dom.js';
+import { AnimatedMedia, motionImageAttributes } from './animated-media.js';
 import { ChatScroll, showLatest } from './chat-scroll.js';
 import { PreferenceSync, SYNC_DEFAULTS } from './preferences.js';
 import { Notices } from './notices.js';
@@ -16,10 +17,14 @@ import { ArtworkEditor, cropStyle, readCrop } from './artwork.js';
 import { SelectMenus } from './select-menus.js';
 import { orderedRoles } from './role-display.js';
 import { SidebarResize } from './layout.js';
-import { validChannelHistory, lastServerChannel } from './navigation.js';
+import { ViewportLayout } from './viewport.js';
+import { BrowserNotifications, conversationIsInFocus, messageWantsAlert } from './notifications.js';
+import { attachmentMenuMarkup, chooseAttachment, installComposerInteractions } from './composer-interactions.js';
+import { finishStartup } from './startup.js';
+import { validChannelHistory, lastServerChannel, readNavigation, saveNavigation } from './navigation.js';
 import { ImageViewer } from './image-viewer.js';
 import { applyPalette } from './appearance.js';
-import { emojiPicker, emojiGrid, EMOJI_CATEGORIES, searchGiphy } from './pickers.js';
+import { emojiPicker, emojiGrid, searchEmoji, EMOJI_CATEGORIES, searchGiphy, lookupGiphyStill } from './pickers.js';
 import { icon, nexusLogo } from './icons.js';
 import { NexusCall } from './rtc.js';
 import { MediaPreferences, MEDIA_DEFAULTS, mediaError } from './media-devices.js';
@@ -29,6 +34,7 @@ import { NexusSounds } from './sounds.js';
 import * as UI from './ui.js';
 import * as CommunityUI from './community-ui.js';
 import { NexusMediaView, toggleMediaFullscreen } from './media-view.js';
+import { CallPreview, placeCallDock } from './call-preview.js';
 
 // Account preferences sync with the server; device layout and unsent drafts stay local.
 const DEFAULT_PREFERENCES = { ...SYNC_DEFAULTS, members: false, notifications: false, collapsedCategories: {}, voiceMembers: false };
@@ -90,6 +96,7 @@ let securityRevision = 0;
 let recoveryProof = null;
 let displayedRecoveryCodes = [];
 let contextSelection = null;
+let notificationConversation = null;
 let incomingCall = null;
 let speakerTest = null;
 let searchResults = [];
@@ -124,9 +131,15 @@ const call = new NexusCall({
 });
 const sounds = new NexusSounds({ getSettings: () => preferences, isQuiet: () => call.deafened || state.user?.preferredStatus === 'dnd' || state.user?.status === 'dnd', isFeedbackQuiet: () => state.user?.preferredStatus === 'dnd' || state.user?.status === 'dnd' });
 const mediaView = new NexusMediaView({ getState: () => ({ ...state, socketId: socket?.id }), getCall: () => call, getSocketId: () => socket?.id, getRoot: () => $('#main'), getMediaRoot: () => $('#media-root'), storage: (() => { try { return localStorage; } catch { return null; } })(), onOutputError: message => toast(message, true), onPlaybackBlocked: blocked => { state.audioBlocked = blocked; if (state.view === 'voice') mediaView.update(); } });
+const callPreview = new CallPreview({ getState:()=>state, getCall:()=>call, getSocketId:()=>socket?.id, getRoot:()=>$('#call-preview'), onChange:()=>renderDock() });
 const panels=new SidebarResize({getPreferences:()=>preferences,onSave:()=>savePreferences()});
 const imageViewer=new ImageViewer({getState:()=>state,showModal,request,toast,escape:e,canDownload:file=>UI.canDownload(state,file)});
 const notices=new Notices($('#toasts'));
+const browserNotifications=new BrowserNotifications({request,getPreferences:()=>preferences,isQuiet:()=>state.user?.preferredStatus==='dnd'||state.user?.status==='dnd',
+  storage:(()=>{try{return localStorage;}catch{return null;}})(),
+  onEnabled:enabled=>{preferences.notifications=enabled;savePreferences();refreshSettingsControls();},
+  onChange:value=>{state.notificationSettings=value;refreshSettingsControls();},onOpen:openNotificationConversation,
+});
 const clientUpdates = new ClientUpdates({ onUpdate: () => {
   if (canRefreshClient()) location.reload();
   else notices.show('A new Nexus version is ready.', false, { duration: 0, action: { name: 'reload-client', label: 'Reload' } });
@@ -135,8 +148,9 @@ function canRefreshClient() { return Boolean(state.user) && !call.active && !cal
 const artworkEditor=new ArtworkEditor();
 const selectMenus=new SelectMenus($('#modal-root'));
 const tooltips=new Tooltips();
+const animatedMedia=new AnimatedMedia({motion:preferences.motion!==false,providerStill:source=>lookupGiphyStill({key:state.config.giphyApiKey,source})});
 const discoverySearch=new DiscoverySearch({request,onChange:()=>{if(modalType==='search:discovery')syncMarkup($('#search-results'),UI.discoverySearchMarkup(discoverySearch));}});
-const chatScroll=new ChatScroll({getFollow:()=>followChat,setFollow:value=>{followChat=value;if(value)unreadBelow=0;},getHistory:()=>state.historyWindow,motion:()=>preferences.motion!==false&&!window.matchMedia('(prefers-reduced-motion: reduce)').matches,onChange:()=>{updateScrollButton();if(followChat&&!state.historyWindow&&!state.loadingMessages&&!document.hidden&&state.view==='chat'&&UI.activeConversation(state)?.unread)markRead(state.activeConv);}});
+const chatScroll=new ChatScroll({getFollow:()=>followChat,setFollow:value=>{followChat=value;if(value)unreadBelow=0;},getHistory:()=>state.historyWindow,motion:()=>preferences.motion!==false&&!window.matchMedia('(prefers-reduced-motion: reduce)').matches,onChange:()=>{updateScrollButton();if(UI.activeConversation(state)?.unread)markRead(state.activeConv);}});
 const preferenceSync=new PreferenceSync({request,onApply:values=>{Object.assign(preferences,values);persistLocalPreferences();applyPreferences();refreshSettingsControls();},onStatus:()=>{}});
 
 // Browsers permit audio after a deliberate user gesture. Never queue surprise audio.
@@ -155,6 +169,8 @@ function applyPreferences() {
   if(document.documentElement.dataset.palette!==preferences.palette)applyPalette(preferences.palette);
   document.body.classList.toggle('compact', preferences.compact);
   document.body.classList.toggle('reduce-motion', preferences.motion === false);
+  document.body.classList.toggle('gestures-enabled',preferences.gestures!==false);
+  animatedMedia.setMotion(preferences.motion!==false);
   const showMembers=state.view==='voice'?preferences.voiceMembers:preferences.members;
   $('#app').classList.toggle('no-members',!showMembers || !state.activeConv);
   if(state.view==='voice'&&!showMembers)$('#app').classList.remove('show-members');
@@ -162,15 +178,17 @@ function applyPreferences() {
   if(isForum(UI.activeConversation(state))&&!state.activeThread){const list=$('.forum-topics');if(list){list.classList.toggle('grid',preferences.forumLayout!=='list');list.classList.toggle('list',preferences.forumLayout==='list');}for(const node of document.querySelectorAll('[data-action=forum-layout]'))node.setAttribute('aria-pressed',String(node.dataset.layout===preferences.forumLayout));}
   if(UI.activeConversation(state)?.type==='media'){const list=$('#message-list');list?.classList.toggle('list',preferences.mediaLayout==='list');$('#message-scroll')?.classList.toggle('list-layout',preferences.mediaLayout==='list');for(const node of document.querySelectorAll('[data-action=collection-layout]'))node.setAttribute('aria-pressed',String(node.dataset.layout===preferences.mediaLayout));}
   if (!preferences.sounds || !Number(preferences.soundVolume)) sounds.stopAll();
+  browserNotifications.quiet();
 }
 function refreshSettingsControls() {
   if(modalType!=='settings')return;
-  for(const [key,action] of Object.entries({sounds:'pref-sounds',motion:'pref-motion',compact:'pref-compact',gestures:'pref-gestures',members:'pref-members',notifications:'pref-notifications'})){
+  for(const [key,action] of Object.entries({sounds:'pref-sounds',motion:'pref-motion',compact:'pref-compact',gestures:'pref-gestures',members:'pref-members'})){
     const node=$(`#modal-root [data-action=${action}]`);if(node){node.classList.toggle('on',Boolean(preferences[key]));node.setAttribute('aria-checked',String(Boolean(preferences[key])));}
   }
   for(const node of document.querySelectorAll('#modal-root [data-action=set-palette]')){const selected=node.dataset.palette===preferences.palette;node.classList.toggle('selected',selected);node.setAttribute('aria-pressed',String(selected));}
   const volume=$('#sound-volume');if(volume&&document.activeElement!==volume)volume.value=preferences.soundVolume;
   if($('#sound-volume-value'))$('#sound-volume-value').textContent=`${preferences.soundVolume}%`;
+  const notifications=$('#notification-preferences');if(notifications)syncMarkup(notifications,UI.notificationPreferencesMarkup(preferences,state.notificationSettings));
 
 }
 function toast(message, error = false) {return notices.show(String(message),error);}
@@ -196,21 +214,35 @@ async function request(endpoint, options = {}, refreshSource = true) {
 }
 function messageForUI(id) {return state.messages.find(message=>message.id===id)||(state.activeThread?.id===id?state.activeThread:null)||state.pins.find(message=>message.id===id);}
 function userFor(id) { return state.users.find(u => u.id === id) || { id, displayName: 'Nexus user', username: 'user', accent: '#b9a1f0' }; }
-function rememberView() {
-  try { sessionStorage.setItem(`${CONFIG.viewStoragePrefix}${state.user.id}`, JSON.stringify({ server: state.activeServer, conversation: state.activeConv, view: state.view, homeTab: state.homeTab, lastDM: state.lastDM, lastChannels: state.lastChannels })); } catch { /* Navigation can work without persistence. */ }
-}
+function rememberView() { saveNavigation(state); }
+
 function setMarkup(node, html) {
   syncMarkup(node,html);
 }
 function renderChrome() {
   if (!state.user) return;
   setMarkup($('#workspace-nav'), UI.renderNavigation(state));
-  setMarkup($('#sidebar'), UI.renderSidebar(state, getCall()));
+  setMarkup($('#sidebar-content'), UI.sidebarMainMarkup(state));
+  setMarkup($('#user-bar'), UI.userBarMarkup(state, getCall()));
   setMarkup($('#members'), UI.renderMembers(state));
   applyPreferences();
   const unread = UI.totalUnreadCount(state);
+  browserNotifications.badge(unread);
   document.title = `${unread ? `(${unread}) ` : ''}${state.activeConv ? `${UI.conversationName(state)} · ` : ''}Nexus`;
 }
+async function openNotificationConversation(id) {
+  if(typeof id!=='string'||!/^[a-zA-Z0-9_.:-]{1,128}$/.test(id))return;
+  if(!state.user){notificationConversation=id;return;}
+  try {
+    if(!state.servers.flatMap(server=>server.channels).concat(state.dms).some(item=>item.id===id))await refreshWorkspace();
+    if(state.servers.flatMap(server=>server.channels).concat(state.dms).some(item=>item.id===id))await selectConversation(id,{autoJoin:false});
+    else toast('This conversation is no longer available.',true);
+  }catch(error){toast(error.message,true);}
+}
+window.addEventListener('storage',event=>{
+  if(event.key!==CONFIG.preferencesKey)return;const saved=readLocal(CONFIG.preferencesKey,{});
+  if(typeof saved.notifications==='boolean'&&saved.notifications!==preferences.notifications){preferences.notifications=saved.notifications;if(saved.notifications)browserNotifications.reconcile();else browserNotifications.disable();refreshSettingsControls();}
+});
 function draftKey() { return `${CONFIG.draftPrefix}${state.user?.id}.${state.activeConv}${state.activeThread?`.${state.activeThread.id}`:''}`; }
 function restoreComposer() {
   const input = $('#message-input');
@@ -224,7 +256,9 @@ function renderMain({ bottom = false, preservePosition = false } = {}) {
   document.body.classList.toggle('has-composer', state.view === 'chat' && !isCollection(UI.activeConversation(state)));
   if (state.view === 'voice' && mediaView.update()) return;
   composerResizeObserver?.disconnect();
-  $('#main').innerHTML = state.view === 'home' ? UI.homeMarkup(state) : state.view === 'voice' ? UI.voiceMarkup({ ...state, socketId: socket?.id }, getCall()) : UI.chatMarkup(state);
+  const main=$('#main'),viewKey=JSON.stringify([state.user.id,state.view,state.activeConv,state.activeServer,state.homeTab,state.activeThread?.id]);
+  const markup=state.view === 'home' ? UI.homeMarkup(state) : state.view === 'voice' ? UI.voiceMarkup({ ...state, socketId: socket?.id }, getCall()) : UI.chatMarkup(state);
+  if(main.dataset.viewKey===viewKey)syncMarkup(main,markup);else{mediaView.releaseVideoTiles();main.innerHTML=markup;main._nexusMarkup=markup;main.dataset.viewKey=viewKey;}
   if (state.view === 'chat') { restoreComposer();watchComposer();renderTyping(); bindChatScroll(); if (bottom) scrollBottom();else if(oldTop!=null&&$('#message-scroll'))$('#message-scroll').scrollTop=oldTop; }
   if (state.view === 'voice') mediaView.update();
 }
@@ -272,6 +306,7 @@ async function loadWorkspace() {
   state.lastChannels = {};
   state.config = await request('/api/config');
   await refreshWorkspace();
+  browserNotifications.attach(state.user.id,state.config.webPush);
   mediaPreferences.attach(state.user.id);
   mediaView.audio.attach(state.user.id);
   // A revoked saved output stays silent until selected again; never leak call audio to another device.
@@ -280,18 +315,22 @@ async function loadWorkspace() {
   state.connected = false;
   $('#auth-screen')?.remove();
   $('#app').inert = false; $('#app').removeAttribute('aria-hidden');
-  let previous;
-  try { previous = JSON.parse(sessionStorage.getItem(`${CONFIG.viewStoragePrefix}${state.user.id}`)); } catch { /* Begin at the default channel. */ }
+  const previous=readNavigation(state.user.id);
   state.lastChannels = validChannelHistory(state.servers, previous?.lastChannels);
   state.lastDM = state.dms.some(dm => dm.id === previous?.lastDM) ? previous.lastDM : null;
   if (previous?.homeTab === 'spaces' || previous?.homeTab === 'inbox') state.homeTab = previous.homeTab;
   const conversations = state.servers.flatMap(s => s.channels).concat(state.dms);
-  if (previous?.conversation && conversations.some(c => c.id === previous.conversation)) {
-    await selectConversation(previous.conversation,{autoJoin:false});
+  const requestedConversation=new URLSearchParams(location.search).get('conversation')||notificationConversation;
+  const startConversation=conversations.some(c=>c.id===requestedConversation)?requestedConversation:previous?.conversation;
+  notificationConversation=null;
+  if (startConversation && conversations.some(c => c.id === startConversation)) {
+    await selectConversation(startConversation,{autoJoin:false});
   } else {
-    state.activeServer = null; state.activeConv = null; state.view = 'home'; renderAll();
+    state.activeServer=state.servers.some(server=>server.id===previous?.server)?previous.server:null;state.activeConv=null;state.view='home';
+    if(state.activeServer&&state.homeTab==='spaces')await selectServer(state.activeServer);else renderAll();
   }
   await connectRealtime();
+  if(new URLSearchParams(location.search).has('conversation')){const url=new URL(location.href);url.searchParams.delete('conversation');history.replaceState(null,'',url.pathname+url.search+url.hash);}
   if (state.view === 'home' && !state.activeServer && state.homeTab === 'spaces') refreshDiscovery();
   const invite = new URLSearchParams(location.search).get('invite');
   if (invite) { showJoinServer(invite); history.replaceState(null, '', location.pathname); }
@@ -311,7 +350,7 @@ async function connectRealtime() {
       await refreshWorkspace();
       if (state.view === 'chat'&&followChat) await loadMessages(state.activeConv, true);
       renderChrome();syncConnectionBanner();preferenceSync.flush();sendActivity(true);
-      clientUpdates.check();
+      clientUpdates.check();browserNotifications.reconcile();
       if (call.resumeAfterReconnect) await call.reconnect();
     } catch (error) { toast(error.message, true); }
   });
@@ -356,17 +395,14 @@ async function connectRealtime() {
       if (!state.historyWindow && (message.threadId || null) === (state.activeThread?.id || null)) { if (!state.messages.some(m => m.id === message.id)) state.messages.push(message); } else { const root = state.messages.find(item => item.id === message.threadId); if (root) root.replyCount = (root.replyCount || 0) + 1; }
       if (!followChat && message.authorId !== state.user.id) unreadBelow++;
       renderMessages(message.authorId === state.user?.id, alreadyVisible ? null : message.id);
-      if (document.visibilityState === 'visible' && followChat) markRead(message.conversationId);
+      if (isReadingConversation(message.conversationId)) markRead(message.conversationId);
     }
     const dm = state.dms.find(d => d.id === message.conversationId);
     if (dm) {
       dm.lastMessage = message;
       state.dms = [dm, ...state.dms.filter(d => d !== dm)];
-      if (preferences.notifications && state.user.preferredStatus !== 'dnd' && message.authorId !== state.user?.id && (document.hidden || state.activeConv !== dm.id) && 'Notification' in window && Notification.permission === 'granted') {
-        const notification = new Notification(`${userFor(message.authorId).displayName} · Nexus`, { body: UI.messagePreview(message).slice(0,120), tag: dm.id });
-        notification.onclick = () => { window.focus(); selectConversation(dm.id); notification.close(); };
-      }
     }
+    if(!alreadyVisible&&message.authorId!==state.user?.id&&shouldSound(message)&&!isReadingConversation(message.conversationId))browserNotifications.live(message);
     renderChrome();
   });
   socket.on('message:updated', message => { if(!state.blockedIds.includes(message.authorId)){const dm=state.dms.find(dm=>dm.id===message.conversationId);if(dm?.lastMessage?.id===message.id){dm.lastMessage=message;renderChrome();}upsertMessage(message);} });
@@ -392,9 +428,7 @@ async function connectRealtime() {
   });
 }
 function shouldSound(message) {
-  if (state.dms.some(dm => dm.id === message.conversationId)) return true;
-  const server = state.servers.find(server => server.channels.some(channel => channel.id === message.conversationId));
-  return Boolean(server && (server.defaultNotifications !== 'mentions' || message.mentions?.includes(state.user.id)));
+  return messageWantsAlert(message,{userId:state.user?.id,dms:state.dms,servers:state.servers});
 }
 function upsertMessage(message) {
   if (message.conversationId !== state.activeConv) return;
@@ -410,8 +444,11 @@ function clearUnread(conversationId) {
   const item = state.servers.flatMap(s => s.channels).concat(state.dms).find(c => c.id === conversationId);
   if (item) item.unread = 0; renderChrome();
 }
+function isReadingConversation(conversationId) {
+  return conversationIsInFocus({ conversationId, activeConversationId:state.activeConv, view:state.view, hidden:document.hidden, focused:document.hasFocus(), following:followChat, history:state.historyWindow, loading:state.loadingMessages, modal:Boolean(modalType) });
+}
 async function markRead(conversationId) {
-  if (!conversationId || document.hidden) return;
+  if (!isReadingConversation(conversationId)) return;
   clearUnread(conversationId);
   try { await request(`/api/conversations/${encodeURIComponent(conversationId)}/read`, { method: 'POST', body: {} }); } catch { /* Reconnection reloads the authoritative unread counts. */ }
 }
@@ -419,6 +456,9 @@ async function selectConversation(conversationId, {autoJoin=true} = {}) {
   const channel = state.servers.flatMap(s => s.channels).find(c => c.id === conversationId);
   const dm = state.dms.find(d => d.id === conversationId);
   if (!channel && !dm) return;
+  if(state.activeConv===conversationId&&state.view==='chat'&&!state.activeThread&&$('#main').dataset.viewKey===JSON.stringify([state.user.id,state.view,state.activeConv,state.activeServer,state.homeTab,undefined])){
+    $('#app').classList.remove('sidebar-open','show-members');closePopover();return;
+  }
   ++messageRevision;
   state.activeConv = conversationId; state.activeServer = channel?.serverId || null;
   state.homeTab = dm ? 'inbox' : 'spaces'; if (dm) state.lastDM = conversationId;
@@ -478,7 +518,6 @@ function resizeInput() {
   syncComposerPlaceholder();
   input.style.height = `${CONFIG.composerMinHeight}px`;
   input.style.height = `${Math.min(CONFIG.composerMaxHeight, Math.max(CONFIG.composerMinHeight, input.scrollHeight))}px`;
-  positionCallDock();
 }
 function clearPending() { for (const file of state.pending) if (file.localUrl) {if(file.uploading)file.controller?.abort();URL.revokeObjectURL(file.localUrl);} state.pending = []; }
 function renderPending() {
@@ -494,7 +533,7 @@ function renderPending() {
       const live=new Set();
       state.pending.forEach((file,index)=>{
         let card=attachmentNodes.get(file);
-        if(!card){card=document.createElement('div');card.className='pending-file';card.innerHTML=`${/^image\//.test(file.type)||file.gifId?`<button type="button" class="pending-thumbnail" data-action="position-attachment" aria-label="Position image preview" title="Position image preview"><img src="${e(file.localUrl||file.url)}" alt="${e(file.name)}"></button>`:icon('attachment',24)}<div><strong>${e(file.name)}</strong><small></small><progress max="100" aria-label="Upload progress"></progress></div><div class="pending-actions"><button type="button" data-action="toggle-attachment-spoiler" class="icon-button" aria-label="Mark as spoiler">${icon('eyeOff',18)}</button><button type="button" data-action="remove-attachment" class="icon-button" aria-label="Remove ${e(file.name)}">${icon('close',18)}</button></div>`;attachmentNodes.set(file,card);}
+        if(!card){card=document.createElement('div');card.className='pending-file';card.innerHTML=`${/^image\//.test(file.type)||file.gifId?`<button type="button" class="pending-thumbnail" data-action="position-attachment" aria-label="Position image preview" title="Position image preview"><img src="${e(file.localUrl||file.url)}" ${motionImageAttributes(file)} alt="${e(file.name)}"></button>`:icon('attachment',24)}<div><strong>${e(file.name)}</strong><small></small><progress max="100" aria-label="Upload progress"></progress></div><div class="pending-actions"><button type="button" data-action="toggle-attachment-spoiler" class="icon-button" aria-label="Mark as spoiler">${icon('eyeOff',18)}</button><button type="button" data-action="remove-attachment" class="icon-button" aria-label="Remove ${e(file.name)}">${icon('close',18)}</button></div>`;attachmentNodes.set(file,card);}
         card.classList.toggle('uploading',Boolean(file.uploading));card.querySelector('small').textContent=file.uploading?`${file.paused?'Reconnecting · ':''}${file.progress||0}%`:(file.gifId||file.provider)?'GIF':UI.bytes(file.size||0);const progress=card.querySelector('progress');progress.hidden=!file.uploading;progress.value=file.progress||0;for(const button of card.querySelectorAll('[data-index], [data-action=remove-attachment], [data-action=toggle-attachment-spoiler], [data-action=position-attachment]'))button.dataset.index=index;const spoiler=card.querySelector('[data-action=toggle-attachment-spoiler]');spoiler.hidden=false;spoiler.setAttribute('aria-pressed',String(Boolean(file.spoiler)));spoiler.setAttribute('aria-label',file.spoiler?'Remove spoiler':'Mark as spoiler');card.classList.toggle('spoiler-pending',Boolean(file.spoiler));const preview=card.querySelector('.pending-thumbnail img');if(preview)preview.style.cssText=cropStyle(file.previewCrop);
         live.add(card);if(list.children[index]!==card)list.insertBefore(card,list.children[index]||null);
       });
@@ -512,17 +551,17 @@ async function sendMessage() {
   if (state.pending.some(file => file.uploading || !file.id && !file.gifId && !file.provider)) { toast('Wait for your attachments to finish uploading.', true); return; }
   if (!state.connected) { toast('Wait for your connection to return before sending.', true); return; }
   state.sending = true;
-  $('#composer button[type="submit"]').disabled = true;
+  const submit=$('#composer button[type="submit"]');submit.disabled = true;
   try {
     const result = await request(`/api/conversations/${encodeURIComponent(conversationId)}/messages${state.activeThread ? `?threadId=${encodeURIComponent(state.activeThread.id)}` : ''}`, { method: 'POST', body: {
-      text:body,attachmentCrops:Object.fromEntries(state.pending.filter(file=>file.previewCrop).map(file=>[attachmentKey(file),file.previewCrop])),spoilers:state.pending.filter(file=>file.spoiler).map(attachmentKey), attachments: state.pending.filter(f => !f.gifId && !f.provider).map(f => f.id), gifs: state.pending.filter(f => f.gifId).map(f => f.gifId), providerGifs: state.pending.filter(f=>f.provider).map(({provider,providerId,url,title})=>({provider,providerId,url,title})), replyTo: state.replyTo, threadId: state.activeThread?.id || null,
+      text:body,attachmentCrops:Object.fromEntries(state.pending.filter(file=>file.previewCrop).map(file=>[attachmentKey(file),file.previewCrop])),spoilers:state.pending.filter(file=>file.spoiler).map(attachmentKey), attachments: state.pending.filter(f => !f.gifId && !f.provider).map(f => f.id), gifs: state.pending.filter(f => f.gifId).map(f => f.gifId), providerGifs: state.pending.filter(f=>f.provider).map(({provider,providerId,url,title,still})=>({provider,providerId,url,title,still})), replyTo: state.replyTo, threadId: state.activeThread?.id || null,
     } });
     sounds.play('sent');
     if (conversationId === state.activeConv) {
       if (!state.messages.some(m => m.id === result.message.id)) state.messages.push(result.message);
       input.value = ''; input.style.height = `${CONFIG.composerMinHeight}px`; clearPending(); state.replyTo = null;
       try { localStorage.removeItem(draftKey()); } catch { /* Draft storage can be unavailable. */ }
-      renderMessages(true, result.message.id); renderPending(); if(['collection-upload','forum-post'].includes(modalType))closeModal(false,true);else input.focus(); markRead(conversationId);
+      renderMessages(true, result.message.id); renderPending(); if(['collection-upload','forum-post'].includes(modalType))closeModal(false,true);else if(!navigator.maxTouchPoints&&document.activeElement===submit&&input.isConnected)input.focus({preventScroll:true}); markRead(conversationId);
     }
   } catch (error) { toast(error.message, true); }
   finally { state.sending = false; const button = $('#composer button[type="submit"]'); if (button) button.disabled = false; }
@@ -578,7 +617,7 @@ function closeModal(keepCall = false, force = false) {
   if (modalPreviousFocus?.isConnected) modalPreviousFocus.focus({preventScroll:true});
 }
 function formError(message) { toast(message, true); const node = $('#dialog-guard-root #form-error') || $('#form-error'); if (node) node.innerHTML = `<p class="form-error" role="alert">${e(message)}</p>`; }
-function closePopover() { const restore = $('#popover-root [data-participant-menu], #popover-root [data-context-menu]') && $('#popover-root').contains(document.activeElement) ? popoverAnchor : null; clearTimeout(gifSearchTimer); gifRequest?.abort(); gifRequest=null; ++gifRevision; popoverResizeObserver?.disconnect(); popoverAnchor=null; contextSelection=null; $('#popover-root').innerHTML = ''; if(restore?.isConnected)restore.focus?.({preventScroll:true}); }
+function closePopover(restoreComposer = false) { const restore = $('#popover-root [data-participant-menu], #popover-root [data-context-menu]') && $('#popover-root').contains(document.activeElement) ? popoverAnchor : null; const editor=restoreComposer&&document.activeElement?.matches('#gif-search,#emoji-search')?$('#message-input'):null; if(editor&&!editor.disabled)editor.focus({preventScroll:true}); clearTimeout(gifSearchTimer); gifRequest?.abort(); gifRequest=null; ++gifRevision; popoverResizeObserver?.disconnect(); popoverAnchor=null; contextSelection=null; $('#popover-root').innerHTML = ''; if(restore?.isConnected)restore.focus?.({preventScroll:true}); }
 function popover(content, anchor, width = 205) {
   closePopover();
   popoverAnchor=anchor;popoverWidth=width;
@@ -593,7 +632,9 @@ function positionPopover() {
   const rect=popoverAnchor.getBoundingClientRect(),viewport=window.visualViewport;
   const width=viewport?.width || window.innerWidth,heightAvailable=viewport?.height || window.innerHeight,top=viewport?.offsetTop || 0;
   node.style.width=`${Math.min(popoverWidth,width-24)}px`;
-  node.style.maxHeight = `${Math.max(100, Math.min(560,heightAvailable-24))}px`;
+  const available=Math.max(100, Math.min(560,heightAvailable-24));
+  node.style.maxHeight = `${available}px`;
+  node.style.setProperty('--picker-available-height',`${Math.max(0,available-14)}px`);
   const height = node.offsetHeight;
   node.style.left = `${Math.min(width-node.offsetWidth-12,Math.max(12,rect.left))}px`;
   const desired=rect.bottom+height+20<top+heightAvailable?rect.bottom+8:rect.top-height-8;
@@ -779,19 +820,15 @@ async function react(messageId, emoji) {
   const result = await request(`/api/messages/${encodeURIComponent(messageId)}/reactions`, { method: 'POST', body: { emoji } });
   upsertMessage(result.message);
 }
-function positionCallDock() {
-  const dock=$('#call-dock');if(!dock||dock.hidden)return;
-  const composer=$('#main .composer-area')||$('#main .read-only-composer')||$('#main .moderation-notice');
-  const viewport=window.visualViewport,bottom=(viewport?.offsetTop||0)+(viewport?.height||window.innerHeight);
-  dock.style.setProperty('--dock-bottom',`${composer?Math.max(16,window.innerHeight-composer.getBoundingClientRect().top+12):Math.max(16,window.innerHeight-bottom+16)}px`);
-}
 function renderDock() {
-  const current = getCall(); const dock = $('#call-dock');
-  if (!current.active || state.view === 'voice' && state.activeConv === current.active.conversationId) { dock.hidden = true; return; }
-  dock.hidden = false;
-  positionCallDock();
-  dock.innerHTML = `<div class="dock-info">${icon('voice', 15)}<strong>In voice room</strong><button class="icon-button" data-action="leave-voice" aria-label="Disconnect">${icon('hangup', 15)}</button></div><button data-action="return-to-call">${e(UI.conversationName(state, current.active.conversationId))} ${icon('arrow', 11)}</button>`;
+  const dock = $('#call-dock'), sources = callPreview.sources(), markup = UI.callDockMarkup(state, getCall(),{previewCount:sources.length});
+  placeCallDock({dock,app:$('#app'),sidebar:$('#sidebar'),userBar:$('#user-bar'),width:window.innerWidth});
+  dock.hidden = !markup;
+  syncMarkup($('#call-dock-controls'), markup);
+  dock.classList.toggle('has-preview',callPreview.update(Boolean(markup),sources));
+  notices.schedule(true);
 }
+window.matchMedia(`(max-width:${CONFIG.mobileBreakpoint}px)`).addEventListener('change',()=>renderDock());
 function renderCall() {
   refreshCaptureStatus();
   if(state.user){const controls=$('#sidebar .user-controls');if(controls)syncMarkup(controls,UI.userControls(call));}
@@ -828,6 +865,8 @@ function showIncomingCall(payload) {
   showModal(`<div style="text-align:center;padding-top:12px">${UI.avatar(payload.user, { status: true })}<h2 id="modal-title" style="margin:20px 0 10px">${e(payload.user.displayName)}</h2><p class="modal-description">${payload.video ? 'Incoming video call.' : 'Incoming voice call.'}</p><div class="modal-footer" style="justify-content:center"><button class="button-danger" data-action="decline-call">${icon('hangup', 17)}Decline</button><button class="button-primary" data-action="accept-call">${icon(payload.video ? 'video' : 'phone', 17)}Answer</button></div></div>`, { type: 'incoming' });
 }
 function showAuth(mode = 'login', error = '', notice = '') {
+  browserNotifications.detach();
+  animatedMedia.reset();
   composerResizeObserver?.disconnect();preferenceSync.detach();clearTimeout(reconnectTimer);
   if(!['reset-password','verify-email'].includes(mode))recoveryProof=null;
   document.title = mode==='register'?'Nexus · Create account':mode==='login'?'Nexus · Sign in':'Nexus · Account recovery';
@@ -917,6 +956,7 @@ document.addEventListener('click', async event => {
     }
     switch (action) {
       case 'reload-client':
+        notices.dismissAction('reload-client');
         if (canRefreshClient()) location.reload();
         else { const effects = [call.active || call.joining ? 'end your current call' : '', modalDirty || profileDirty ? 'discard unsaved settings' : '', state.pending.length || imageUploads ? 'discard pending uploads' : '', state.sending ? 'interrupt the message being sent' : ''].filter(Boolean);
           showConfirmation(`<h2 id="confirmation-title">Reload Nexus?</h2><p class="modal-description">${effects.length ? `Reloading will ${e(effects.join(' and '))}.` : 'The interface will reload to the current version.'} Sent messages remain saved.</p><div class="confirmation-actions"><button class="button-secondary" data-action="dismiss-confirmation">Keep using Nexus</button><button class="button-primary" data-action="confirm-client-reload">Reload Nexus</button></div>`, 'client-update'); }
@@ -1031,18 +1071,21 @@ document.addEventListener('click', async event => {
       }
       case 'jump-message': await jumpMessage(id); break;
       case 'load-earlier': button.disabled = true; await loadEarlier(); break;
-      case 'gif': await showGifPicker(button); break;
+      case 'gif': showGifPicker(button,{keyboard:event.detail===0}); break;
       case 'attach':
         if (state.pending.length >= state.config.maxAttachments) { toast(`Up to ${state.config.maxAttachments} files per message.`, true); break; }
-        $('#attachment-input').accept=''; $('#attachment-input').click(); break;
+        popover(attachmentMenuMarkup({camera:Boolean(navigator.maxTouchPoints)}),button,292);break;
+      case 'attachment-source':
+        if(!UI.canWrite(state)||state.pending.length>=state.config.maxAttachments)break;
+        chooseAttachment($('#attachment-input'),button.dataset.source);closePopover();break;
       case 'remove-attachment': { const [file] = state.pending.splice(Number(button.dataset.index), 1); if(file?.uploading)file.controller?.abort();if (file?.localUrl) URL.revokeObjectURL(file.localUrl); if(file?.id&&!file.gifId&&!file.provider)request(`/api/files/${file.id}`,{method:'DELETE'}).catch(()=>{}); } renderPending(); break;
       case 'reply': replyToMessage(id);break;
       case 'cancel-reply': state.replyTo = null; renderPending(); break;
       case 'emoji': case 'react-menu':
         popover(emojiPicker(action === 'emoji' ? 'insert-emoji' : 'reaction',id || ''),actionAnchor,364);
-        $('#emoji-tab-Faces')?.focus({preventScroll:true}); break;
+        if(event.detail===0)$('#emoji-search')?.focus({preventScroll:true}); break;
       case 'emoji-category': changeEmojiCategory(button.dataset.category); break;
-      case 'close-picker': closePopover(); break;
+      case 'close-picker': closePopover(true); break;
       case 'gif-more': await loadGifResults(true); break;
       case 'gif-retry': await loadGifResults(); break;
       case 'set-palette': preferences.palette=button.dataset.palette; savePreferences(); refreshSettingsControls(); break;
@@ -1050,7 +1093,7 @@ document.addEventListener('click', async event => {
       case 'confirm-block-user': await request(`/api/blocks/${encodeURIComponent(id)}`,{method:'PUT',body:{}}); closeModal(false,true); await refreshBlockedView(); toast('User blocked. Their messages and media are hidden.'); break;
       case 'unblock-user': await request(`/api/blocks/${encodeURIComponent(id)}`,{method:'DELETE'}); await refreshBlockedView(); if(modalType==='settings'&&settingsTab==='blocked')await showBlockedUsers(); toast('User unblocked.'); break;
       case 'insert-emoji': {
-        const input = $('#message-input'); if (input) { input.setRangeText(button.dataset.emoji, input.selectionStart, input.selectionEnd, 'end'); input.dispatchEvent(new Event('input', { bubbles: true })); input.focus(); } closePopover(); break;
+        const input = $('#message-input'); if (input) { input.setRangeText(button.dataset.emoji, input.selectionStart, input.selectionEnd, 'end'); input.dispatchEvent(new Event('input', { bubbles: true })); input.focus({preventScroll:true}); } closePopover(true); break;
       }
       case 'reaction': closePopover(); await react(id, button.dataset.emoji); break;
       case 'message-menu': showMessageOptions(id,button);break;
@@ -1121,9 +1164,8 @@ document.addEventListener('click', async event => {
       case 'pref-compact': preferences.compact = !preferences.compact; savePreferences(); refreshSettingsControls(); break;
       case 'pref-members': preferences.members = !preferences.members; savePreferences(); refreshSettingsControls(); break;
       case 'pref-notifications':
-        if (!('Notification' in window)) { toast('This browser does not support desktop notifications.', true); break; }
-        if (!preferences.notifications && await Notification.requestPermission() !== 'granted') { toast('Enable notifications in your browser to use this setting.', true); break; }
-        preferences.notifications = !preferences.notifications; savePreferences(); refreshSettingsControls(); break;
+        if(preferences.notifications)await browserNotifications.disable();else await browserNotifications.enable();break;
+      case 'retry-notifications': await browserNotifications.reconcile();break;
       case 'status-menu':
         popover(['online', 'idle', 'dnd', 'invisible'].map(status => `<button class="popover-item" data-action="set-status" data-status="${status}">${UI.presenceSymbol(status)}${UI.statusLabel(status)}</button>`).join(''), button); break;
       case 'set-status': {
@@ -1146,6 +1188,7 @@ document.addEventListener('click', async event => {
       case 'leave-voice':
         call.leave(); renderCall(); toast('You left the conversation.'); break;
       case 'return-to-call': { const conv = getCall().active?.conversationId; if (conv) { await selectConversation(conv); state.view = 'voice'; renderAll(); } break; }
+      case 'next-call-preview': callPreview.next();renderDock();break;
       case 'decline-call': if(incomingCall)socket?.emit('call:decline',{conversationId:incomingCall.conversationId});closeModal(true);break;
       case 'accept-call': {
         const incoming = incomingCall; closeModal(true); if (!incoming) break;
@@ -1163,7 +1206,7 @@ document.addEventListener('click', async event => {
       case 'open-thread': await openThread(id); break;
       case 'close-thread': clearPending();state.activeThread=null; await loadMessages(state.activeConv); renderMain({bottom:true}); break;
       case 'jump-pin': {closePopover();const pin=state.pins.find(item=>item.id===id); if (pin && isForum(UI.activeConversation(state))) await openThread(pin.threadId || pin.id); await jumpMessage(id); break; }
-      case 'pick-gif': { if(state.pending.length>=state.config.maxAttachments) throw new Error('Remove an attachment before adding another.'); const gif=gifCatalog.find(gif=>gif.id===id); if(gif) state.pending.push({...gif,name:gif.title,type:'image/gif'}); closePopover(); renderPending(); break; }
+      case 'pick-gif': { if(state.pending.length>=state.config.maxAttachments) throw new Error('Remove an attachment before adding another.'); const gif=gifCatalog.find(gif=>gif.id===id); if(gif) state.pending.push({...gif,name:gif.title,type:'image/gif'}); closePopover(true); renderPending(); break; }
       case 'insert-mention': insertMention(button.dataset.username); break;
       case 'delete-dm': showModal(`<h2 id="modal-title">Delete this conversation for both people?</h2><p class="modal-description">Every message and attachment in this DM will be permanently removed for you and the other person. This cannot be undone.</p><div class="modal-footer"><button class="button-secondary" data-action="close-modal">Cancel</button><button class="button-danger" data-action="confirm-delete-dm" data-id="${e(id)}">Delete for both people</button></div>`); break;
       case 'confirm-delete-dm': await request(`/api/dms/${encodeURIComponent(id)}`,{method:'DELETE'}); if(state.lastDM===id)state.lastDM=null; await refreshWorkspace(); closeModal(); state.homeTab='inbox'; state.activeServer=null; state.activeConv=null;state.view='home';renderAll(); break;
@@ -1268,6 +1311,7 @@ document.addEventListener('submit', async event => {
 document.addEventListener('input', event => {
   const input = event.target;
   if(input.closest('#dialog-guard-root'))return;
+  if(input.id==='emoji-search'){updateEmojiSearch();return;}
   if(input.id==='moderation-action')syncModerationFields();
   if (input.id === 'message-input') {
     resizeInput(); updateComposerLimit(); showMentions(input);
@@ -1338,7 +1382,7 @@ document.addEventListener('keydown', event => {
   if (event.target.id === 'message-input' && event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); sendMessage(); }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k' && state.user) { event.preventDefault(); showSearch(); }
   if (event.key === 'Escape') {
-    if ($('#popover-root').children.length) closePopover(); else if ($('#modal-root').children.length) closeModal(); else $('#app').classList.remove('sidebar-open', 'show-members');
+    if ($('#popover-root').children.length) closePopover(true); else if ($('#modal-root').children.length) closeModal(); else $('#app').classList.remove('sidebar-open', 'show-members');
   }
   if (event.key === 'Tab' && $('#modal-root').children.length) {
     const nodes = [...($('#dialog-guard-root')||$('#modal-root')).querySelectorAll('button:not([disabled]), input:not([hidden]), textarea, select, a[href], summary')].filter(n => n.getClientRects().length);
@@ -1377,13 +1421,14 @@ $('#profile-image-input').addEventListener('change', async event => {
   } catch (error) { toast(error.message, true); }
   finally { imageUploads=Math.max(0,imageUploads-1);$('#image-upload-progress')?.remove(); }
 });
-document.addEventListener('visibilitychange', () => { if (!document.hidden && state.user && state.view === 'chat' && followChat) markRead(state.activeConv); });
+document.addEventListener('visibilitychange', () => { if (state.user) markRead(state.activeConv); });
 window.addEventListener('beforeunload', () => { sounds.stopAll(); call.leave(); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) clientUpdates.check(); });
 window.addEventListener('resize', positionPopover);
 window.visualViewport?.addEventListener('resize',positionPopover);
 window.addEventListener('online', () => {preferenceSync.flush(); if (state.user && !socket?.connected) socket?.connect(); if (call.active) call.retryConnections().catch(error => toast(error.message, true)); });
 installInteractionHelpers();
+installComposerInteractions();
 applyPreferences();
 clientUpdates.start();
 (async function init() {
@@ -1396,7 +1441,7 @@ clientUpdates.start();
   } catch (error) {
     if (error.status === 401) showAuth('login');
     else { console.error('[Nexus] Startup failed:',error); showAuth('login', error.message); }
-  }
+  } finally { await finishStartup(); }
 })();
 
 function updatePinState({conversationId,pins}) {
@@ -1454,12 +1499,11 @@ async function queueAttachments(files) {
     } catch(error) {state.pending=state.pending.filter(file=>file!==item);URL.revokeObjectURL(item.localUrl);if(error.name!=='AbortError')toast(error.message,true);}
     if(conversationId===state.activeConv)renderPending();
   }
-  $('#message-input')?.focus();
 }
-function showGifPicker(anchor) {
+function showGifPicker(anchor,{keyboard=false}={}) {
   gifCatalog=[];gifPage={query:'',nextOffset:0,hasMore:false};
-  popover(`<section class="gif-picker" aria-label="GIF picker"><div class="picker-heading"><strong>GIFs</strong><button class="icon-button" data-action="close-picker" aria-label="Close GIF picker">×</button></div><input id="gif-search" type="search" maxlength="50" placeholder="Search GIPHY" aria-label="Search GIPHY" ${state.config.giphyApiKey?'':'disabled'}><div class="gif-results" aria-live="polite"></div><button class="button-secondary gif-more" data-action="gif-more" hidden>Load more</button><a class="gif-attribution" href="https://giphy.com/" target="_blank" rel="noopener noreferrer">Powered by GIPHY</a></section>`,anchor,380);
-  if(state.config.giphyApiKey){$('#gif-search')?.focus();loadGifResults();}
+  popover(`<section class="gif-picker" aria-label="GIF picker"><div class="picker-heading"><strong>GIFs</strong><button type="button" class="icon-button" data-action="close-picker" aria-label="Close GIF picker">×</button></div><input id="gif-search" type="search" inputmode="search" maxlength="50" placeholder="Search GIPHY" aria-label="Search GIPHY" autocomplete="off" autocapitalize="off" spellcheck="false" ${state.config.giphyApiKey?'':'disabled'}><div class="gif-results" aria-live="polite"></div><button class="button-secondary gif-more" data-action="gif-more" hidden>Load more</button><a class="gif-attribution" href="https://giphy.com/" target="_blank" rel="noopener noreferrer">Powered by GIPHY</a></section>`,anchor,380);
+  if(state.config.giphyApiKey){if(keyboard||!navigator.maxTouchPoints)$('#gif-search')?.focus({preventScroll:true});loadGifResults();}
   else $('#popover-root .gif-results').innerHTML='<p class="picker-empty">GIF search is unavailable on this server.</p>';
 }
 async function loadGifResults(append=false) {
@@ -1484,11 +1528,19 @@ async function loadGifResults(append=false) {
     else {more.hidden=false;toast(error.message,true);}
   } finally {if(revision===gifRevision)results.removeAttribute('aria-busy');}
 }
-function gifMarkup(gifs) {return gifs.map(gif=>`<button data-action="pick-gif" data-id="${e(gif.id)}" aria-label="Send ${e(gif.title)}"><img src="${e(gif.preview)}" alt="${e(gif.title)}" loading="lazy" decoding="async" referrerpolicy="no-referrer" width="160" height="104"><span>${e(gif.title)}</span></button>`).join('') || '<p class="picker-empty">No GIFs found. Try another search.</p>';}
+function gifMarkup(gifs) {return gifs.map(gif=>`<button data-action="pick-gif" data-id="${e(gif.id)}" aria-label="Send ${e(gif.title)}"><img src="${e(gif.preview)}" ${motionImageAttributes({...gif,url:gif.preview})} alt="${e(gif.title)}" loading="lazy" decoding="async" referrerpolicy="no-referrer" width="160" height="104"><span>${e(gif.title)}</span></button>`).join('') || '<p class="picker-empty">No GIFs found. Try another search.</p>';}
 function changeEmojiCategory(category) {
   const picker=$('#popover-root .emoji-picker');if(!picker || !EMOJI_CATEGORIES.includes(category))return;
+  picker.dataset.category=category;$('#emoji-search').value='';$('#emoji-result-status').textContent='';
   for(const tab of picker.querySelectorAll('[role=tab]')){const selected=tab.dataset.category===category;tab.setAttribute('aria-selected',String(selected));tab.tabIndex=selected?0:-1;}
-  const grid=$('#emoji-category-grid');grid.innerHTML=emojiGrid(category,picker.dataset.emojiAction,picker.dataset.messageId);grid.setAttribute('aria-labelledby',`emoji-tab-${category}`);grid.scrollTop=0;
+  const grid=$('#emoji-category-grid');grid.innerHTML=emojiGrid(category,picker.dataset.emojiAction,picker.dataset.messageId);grid.removeAttribute('aria-label');grid.setAttribute('aria-labelledby',`emoji-tab-${category}`);grid.scrollTop=0;
+}
+function updateEmojiSearch() {
+  const picker=$('#popover-root .emoji-picker'),input=$('#emoji-search'),grid=$('#emoji-category-grid');if(!picker||!input||!grid)return;
+  const query=input.value.trim(),category=picker.dataset.category||'Faces',count=searchEmoji(query,category).length;
+  grid.innerHTML=emojiGrid(category,picker.dataset.emojiAction,picker.dataset.messageId,query);grid.scrollTop=0;
+  if(query){grid.removeAttribute('aria-labelledby');grid.setAttribute('aria-label','Emoji search results');}else{grid.removeAttribute('aria-label');grid.setAttribute('aria-labelledby',`emoji-tab-${category}`);}
+  $('#emoji-result-status').textContent=query?`${count} ${count===1?'emoji':'emojis'} found`:'';
 }
 function showBlockConfirmation(id) {
   const user=userFor(id);
@@ -1557,7 +1609,7 @@ function sendActivity(force=false) {
   if(!state.user||!socket?.connected)return;
   const away=document.hidden||!document.hasFocus()||Date.now()-activityAt>state.config.idleAfterMs;
   if(!force&&Date.now()-lastActivitySent<30000)return;
-  lastActivitySent=Date.now();socket.emit('presence:activity',{away});
+  lastActivitySent=Date.now();socket.emit('presence:activity',{away,notificationDevice:browserNotifications.deviceId,foreground:!document.hidden&&document.hasFocus()});
 }
 function installInteractionHelpers() {
   const coverInput=document.createElement('input');coverInput.type='file';coverInput.accept='image/png,image/jpeg,image/gif,image/webp';coverInput.id='channel-cover-input';coverInput.hidden=true;document.body.append(coverInput);
@@ -1576,7 +1628,7 @@ function installInteractionHelpers() {
   });
   document.addEventListener('input',event=>{if(event.target.id==='gif-search'){clearTimeout(gifSearchTimer);gifRequest?.abort();++gifRevision;gifSearchTimer=setTimeout(()=>loadGifResults(),350);}});
   for(const eventName of ['pointerdown','keydown','touchstart'])document.addEventListener(eventName,()=>{activityAt=Date.now();sendActivity();},{capture:true,passive:true});
-  document.addEventListener('visibilitychange',()=>sendActivity(true));window.addEventListener('focus',()=>{activityAt=Date.now();sendActivity(true);});window.addEventListener('blur',()=>sendActivity(true));setInterval(()=>sendActivity(true),30000);
+  document.addEventListener('visibilitychange',()=>sendActivity(true));window.addEventListener('focus',()=>{activityAt=Date.now();sendActivity(true);if(state.user)markRead(state.activeConv);});window.addEventListener('blur',()=>sendActivity(true));setInterval(()=>sendActivity(true),30000);
   document.addEventListener('change',event=>{if(event.target.closest('#modal-root form')&&!event.target.closest('#dialog-guard-root')){modalDirty=true;event.target.dispatchEvent(new Event('input',{bubbles:true}));}});
   document.addEventListener('dragstart',event=>{const channel=event.target.closest('[data-drag-channel]'),category=event.target.closest('[data-drag-category]');if(channel)draggedItem={kind:'channel',id:channel.dataset.dragChannel};else if(category)draggedItem={kind:'category',id:category.dataset.dragCategory};else return;event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',draggedItem.id);});
   document.addEventListener('dragover',event=>{if(draggedItem&&event.target.closest('[data-drop-channel],[data-drop-category]')){event.preventDefault();event.dataTransfer.dropEffect='move';}});
@@ -1630,15 +1682,7 @@ function syncConnectionBanner() {
   if (!connectionNoticeActive && state.user) { connectionNoticeActive = true; connectionNoticeNode = toast('Connection lost. Reconnecting… Please wait before sending messages.', true); }
 }
 
-function syncVisualViewport() {
-  const viewport=window.visualViewport,height=viewport?.height||window.innerHeight,editing=document.activeElement?.matches('input:not([type=range]):not([type=checkbox]):not([type=color]),textarea,[contenteditable=true]');
-  // CSS handles orientation; an overlay keyboard can reserve a smaller viewport.
-  const keyboard=editing&&(!viewport||viewport.scale===1)&&window.innerHeight-height>CONFIG.keyboardViewportDifference;
-  document.documentElement.style.setProperty('--visual-height',`${height}px`);document.documentElement.style.setProperty('--visual-top',`${keyboard?viewport?.offsetTop||0:0}px`);document.documentElement.style.setProperty('--viewport-height',keyboard?`min(${height}px,100dvh)`:'100dvh');
-  syncComposerPlaceholder();positionCallDock();
-}
-document.addEventListener('focusin',syncVisualViewport);document.addEventListener('focusout',syncVisualViewport);
-syncVisualViewport();window.visualViewport?.addEventListener('resize',syncVisualViewport);window.visualViewport?.addEventListener('scroll',syncVisualViewport);window.addEventListener('resize',syncVisualViewport);
+const viewportLayout=new ViewportLayout({onLayout:()=>{syncComposerPlaceholder();positionPopover();notices.schedule(true);}});
 installGestures({enabled:()=>preferences.gestures!==false&&!artworkEditor.active,dismissToast:node=>notices.dismiss(node),closeModal:()=>closeModal(),closePopover,viewerNavigate:direction=>imageViewer.navigate(direction),viewerReady:()=>modalType==='image-viewer'&&imageViewer.zoom===1&&imageViewer.items.length>1,hasConversation:()=>Boolean(state.activeConv),canReply:()=>Boolean($('#message-input'))&&UI.canWrite(state),reply:replyToMessage,messageOptions:id=>showMessageOptions(id,document.getElementById(`message-${id}`)),userOptions:showParticipantMenu,contextTarget:target=>resolveContextTarget(target,state.activeServer),contextOptions:target=>showContextMenu(target),openMembers:()=>{preferences[state.view==='voice'?'voiceMembers':'members']=true;savePreferences();$('#app').classList.add('show-members');}});
 
 function roleBody(form){return {name:form.elements.name.value,color:form.elements.color.value,icon:form.elements.icon.value,iconCrop:readCrop(form.elements.iconCrop?.value),displayMembers:Boolean(form.elements.displayMembers?.checked),...CommunityUI.rolePermissionValues(form)};}
@@ -1700,7 +1744,7 @@ function finishAccountDeletion() {
   const userId=state.user.id;sounds.stopAll();incomingCall=null;call.leave(false);socket?.disconnect();preferenceSync.detach();clearPending();
   for(const storage of [localStorage,sessionStorage])try{for(const key of Object.keys(storage))if(key.includes(userId))storage.removeItem(key);}catch{/* Local storage is optional. */}
   try{if(readLocal(CONFIG.preferenceOwnerKey,null)===userId)localStorage.removeItem(CONFIG.preferenceOwnerKey);}catch{/* Optional migration marker. */}
-  state.user=null;state.users=[];state.servers=[];state.dms=[];state.voice=[];state.messages=[];state.discovery=[];state.revealedSpoilers.clear();state.activeConv=null;state.activeServer=null;state.lastDM=null;state.lastChannels={};profileDraft=null;serverDraft=null;roleDraft=null;modalDirty=false;closeModal(true,true);for(const selector of ['#main','#sidebar','#members','#workspace-nav']){const node=$(selector);node.replaceChildren();delete node._nexusMarkup;}showAuth();toast('Your account was permanently deleted.');
+  state.user=null;state.users=[];state.servers=[];state.dms=[];state.voice=[];state.messages=[];state.discovery=[];state.revealedSpoilers.clear();state.activeConv=null;state.activeServer=null;state.lastDM=null;state.lastChannels={};profileDraft=null;serverDraft=null;roleDraft=null;modalDirty=false;closeModal(true,true);for(const selector of ['#main','#sidebar-content','#user-bar','#members','#workspace-nav']){const node=$(selector);node.replaceChildren();delete node._nexusMarkup;}showAuth();toast('Your account was permanently deleted.');
 }
 function syncModerationFields() {
   const action=$('#moderation-action'),duration=$('#moderation-duration'),field=$('#moderation-duration-field');if(!action||!duration)return;

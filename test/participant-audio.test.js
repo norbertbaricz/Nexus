@@ -67,3 +67,9 @@ test('idle renders and repeated cleanup never rewrite unchanged participant pref
  const {ParticipantAudio}=await moduleUnderTest();let writes=0;const controller=new ParticipantAudio({storage:{getItem:()=>null,setItem(){writes++;}}});controller.attach('listener');controller.stop();controller.stop();assert.equal(writes,0);
  controller.setVolume('person',40);controller.flush();controller.stop();controller.stop();assert.equal(writes,1);
 });
+
+test('an empty connecting stream is not attached until a live remote audio track arrives',async()=>{
+ const {ParticipantAudio}=await moduleUnderTest(),f=fixture(),audio=f.audio(),controller=new ParticipantAudio({contextFactory:()=>f.context});let tracks=[];const stream={getAudioTracks:()=>tracks};
+ controller.apply('peer','person',stream,audio);assert.equal(audio.srcObject,null);assert.equal(audio.muted,true);
+ tracks=[f.track];controller.apply('peer','person',stream,audio);assert.equal(audio.srcObject,stream);assert.equal(audio.muted,false);assert.equal(audio.dataset.attempted,'false');controller.stop();
+});
