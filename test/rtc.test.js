@@ -3,7 +3,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
-const MODULE_URL = 'data:text/javascript;base64,' + readFileSync(path.join(__dirname, '../public/rtc.js')).toString('base64');
+const MEDIA_URL = 'data:text/javascript;base64,' + readFileSync(path.join(__dirname, '../public/media-devices.js')).toString('base64');
+const MODULE_URL = 'data:text/javascript;base64,' + Buffer.from(readFileSync(path.join(__dirname, '../public/rtc.js'), 'utf8').replace("'./media-devices.js'", JSON.stringify(MEDIA_URL))).toString('base64');
 const TEST_CONNECTION_TIMEOUT_MS = 5000;
 let nextTrack = 0;
 class Stream {
@@ -14,11 +15,11 @@ class Stream {
   addTrack(track) { this.tracks.push(track); }
   removeTrack(track) { this.tracks=this.tracks.filter(item=>item!==track); }
 }
-const track = kind => ({ kind, id: `track-${++nextTrack}`, readyState: 'live', enabled: true, stop() { this.readyState = 'ended'; } });
+const track = kind => ({ kind, id: `track-${++nextTrack}`, readyState: 'live', enabled: true, constraints: {}, async applyConstraints(value) { this.constraints = value; }, getConstraints() { return this.constraints; }, stop() { this.readyState = 'ended'; } });
 class Peer {
   constructor() { this.signalingState = 'stable'; this.connectionState = 'new'; this.transceivers = []; this.addedCandidates = []; this.offers = []; this.rollbacks = 0; }
   addTransceiver(kind) {
-    const transceiver = { mid: null, kind, receiver: {track: track(kind)}, direction: 'sendrecv', stopped: false, stop() { this.stopped=true; this.sender.track=null; }, sender: { track: null, async replaceTrack(value) { this.track = value; }, getParameters() { return { encodings: [{}] }; }, async setParameters() {} } };
+    const transceiver = { mid: null, kind, receiver: {track: track(kind)}, direction: 'sendrecv', stopped: false, stop() { this.stopped=true; this.sender.track=null; }, sender: { track: null, async replaceTrack(value) { this.track = value; }, getParameters() { return { encodings: [{}] }; }, async setParameters(value) { this.parameters = value; } } };
     this.transceivers.push(transceiver); return transceiver;
   }
   async createOffer(options) { this.offers.push(options); this.transceivers.filter(item=>!item.stopped).forEach((transceiver,index)=>{if(transceiver.mid==null)transceiver.mid=String(index);}); return { type: 'offer', sdp: 'fixture offer' }; }
@@ -45,7 +46,7 @@ async function fixture(t, overrides = {}) {
     timeout() { return { emit(event, payload, callback) { events.push({ event, payload }); if (event === 'voice:join' && overrides.joinAck) overrides.joinAck(callback); else callback(null, { ok: true, peers: [] }); } }; } };
   const devices = { async getUserMedia(constraints) { return new Stream([...(constraints.audio ? [track('audio')] : []), ...(constraints.video ? [track('video')] : [])]); }, async getDisplayMedia() { return new Stream([track('video')]); }, ...overrides.devices };
   const call = new NexusCall({ getSocket: () => socket, getConfig: () => ({ iceServers: [], rtcConnectionTimeoutMs: TEST_CONNECTION_TIMEOUT_MS, rtcMaxRestarts: 1 }),
-    mediaDevices: devices, peerFactory: () => { const peer = new Peer(); peers.push(peer); return peer; }, streamFactory: () => new Stream(),
+    getMediaSettings: () => overrides.preferences || {}, mediaDevices: devices, peerFactory: () => { const peer = new Peer(); peers.push(peer); return peer; }, streamFactory: () => new Stream(),
     onChange() {}, onIncoming() {}, onError: message => errors.push(message), getCanSpeak: () => overrides.canSpeak !== false, getMediaAllowed: () => overrides.mediaAllowed !== false });
   call.bind(socket); t.after(() => call.leave(false));
   return { call, socket, devices, events, errors, peers, handlers };
@@ -187,4 +188,82 @@ test('the room acknowledgement can restrict a stale local microphone permission 
  const f=await fixture(t,{joinAck:callback=>callback(null,{ok:true,peers:[],canSpeak:false})});
  await f.call.join('room');assert.equal(f.call.stageListener,true);assert.equal(f.call.muted,true);assert.equal(f.call.localStream.getAudioTracks()[0].enabled,false);
  assert.ok(f.events.filter(event=>event.event==='voice:update').every(event=>event.payload.muted===true));f.call.leave();assert.equal(f.call.muted,false);
+});
+
+test('saved device IDs and high quality constraints are used for every fresh capture', async t => {
+  const requests = [], preferences = { microphoneId: 'desk-mic', cameraId: 'usb-camera', cameraResolution: '1440', cameraFps: 60, screenResolution: '2160', screenFps: 60 };
+  const f = await fixture(t, { preferences, devices: {
+    async getUserMedia(value) { requests.push(value); return new Stream([...(value.audio ? [track('audio')] : []), ...(value.video ? [track('video')] : [])]); },
+    async getDisplayMedia(value) { requests.push(value); return new Stream([track('video')]); },
+  } });
+  await f.call.join('room', { video: true }); const peer = await f.call.createPeer('remote'); await f.call.toggleScreen();
+  assert.deepEqual(requests[0].audio.deviceId, { exact: 'desk-mic' }); assert.deepEqual(requests[0].video.deviceId, { exact: 'usb-camera' });
+  assert.equal(requests[0].video.height.ideal, 1440); assert.equal(requests[0].video.frameRate.max, 60);
+  assert.equal(requests[1].video.width.max, 3840); assert.equal(requests[1].video.frameRate.max, 60);
+  assert.equal(Object.hasOwn(requests[1].video, 'deviceId'), false); assert.equal(f.call.currentScreenTrack().contentHint, 'motion');
+  assert.equal(peer.audioTransceiver.sender.parameters.encodings[0].maxBitrate, 128000);
+  assert.equal(peer.cameraTransceiver.sender.parameters.encodings[0].maxBitrate, 18000000);
+  assert.equal(peer.screenTransceiver.sender.parameters.encodings[0].maxBitrate, 40000000);
+});
+test('switching a muted microphone replaces all senders before stopping the old track', async t => {
+  const f = await fixture(t); f.call.toggleMute(); await f.call.join('room');
+  const first = await f.call.createPeer('first'), second = await f.call.createPeer('second'), old = f.call.localStream.getAudioTracks()[0], stream = f.call.localStream;
+  await f.call.applyMediaPreferences({ microphoneId: 'new-microphone' });
+  const current = f.call.localStream.getAudioTracks()[0];
+  assert.notEqual(current, old); assert.equal(current.enabled, false); assert.equal(old.readyState, 'ended');
+  assert.equal(f.call.localStream, stream); assert.equal(first.audioTransceiver.sender.track, current); assert.equal(second.audioTransceiver.sender.track, current);
+  assert.equal(f.events.filter(event => event.event === 'voice:join').length, 1);
+});
+test('a failed device capture leaves the current camera and microphone live', async t => {
+  const f = await fixture(t); await f.call.join('room', { video: true }); const peer = await f.call.createPeer('remote');
+  const oldCamera = f.call.currentCameraTrack(), oldMicrophone = f.call.localStream.getAudioTracks()[0];
+  f.devices.getUserMedia = async () => { const error = new Error('Not available'); error.name = 'NotFoundError'; throw error; };
+  await assert.rejects(f.call.applyMediaPreferences({ cameraId: 'missing' }), /Not available/);
+  assert.equal(f.call.currentCameraTrack(), oldCamera); assert.equal(oldCamera.readyState, 'live'); assert.equal(oldMicrophone.readyState, 'live');
+  assert.equal(peer.cameraTransceiver.sender.track, oldCamera); assert.equal(f.call.video, true); assert.equal(f.call.devicePending, false);
+});
+test('a partial sender replacement rolls back every peer and releases the new microphone', async t => {
+  const f = await fixture(t); await f.call.join('room'); const first = await f.call.createPeer('first'), second = await f.call.createPeer('second');
+  const old = f.call.localStream.getAudioTracks()[0], replacement = track('audio');
+  f.devices.getUserMedia = async () => new Stream([replacement]);
+  second.audioTransceiver.sender.replaceTrack = async function(value) { if (value === replacement) throw new Error('Sender rejected the replacement'); this.track = value; };
+  await assert.rejects(f.call.applyMediaPreferences({ microphoneId: 'new-mic' }), /Sender rejected/);
+  assert.equal(first.audioTransceiver.sender.track, old); assert.equal(second.audioTransceiver.sender.track, old);
+  assert.equal(old.readyState, 'live'); assert.equal(replacement.readyState, 'ended'); assert.equal(f.call.localStream.getAudioTracks()[0], old);
+});
+test('a camera switch preserves screen sharing, microphone input and the room', async t => {
+  const f = await fixture(t); await f.call.join('room', { video: true }); await f.call.toggleScreen(); const peer = await f.call.createPeer('remote');
+  const previous = f.call.currentCameraTrack(), screen = f.call.currentScreenTrack(), microphone = f.call.localStream.getAudioTracks()[0];
+  await f.call.applyMediaPreferences({ cameraId: 'new-camera' });
+  assert.equal(previous.readyState, 'ended'); assert.notEqual(peer.cameraTransceiver.sender.track, previous);
+  assert.equal(peer.cameraTransceiver.sender.track, f.call.currentCameraTrack()); assert.equal(peer.screenTransceiver.sender.track, screen);
+  assert.equal(screen.readyState, 'live'); assert.equal(microphone.readyState, 'live'); assert.equal(f.call.active.conversationId, 'room');
+});
+test('live quality changes constrain existing tracks and update all negotiated encoding budgets', async t => {
+  const f = await fixture(t); await f.call.join('room', { video: true }); await f.call.toggleScreen(); const peer = await f.call.createPeer('remote');
+  const camera = f.call.currentCameraTrack(), screen = f.call.currentScreenTrack();
+  await f.call.applyMediaPreferences({ cameraResolution: '720', cameraFps: 24, screenResolution: '1440', screenFps: 30, screenBitrate: 20 });
+  assert.equal(f.call.currentCameraTrack(), camera); assert.equal(f.call.currentScreenTrack(), screen);
+  assert.equal(camera.constraints.height.ideal, 720); assert.equal(camera.constraints.frameRate.max, 24);
+  assert.equal(screen.constraints.width.max, 2560); assert.equal(screen.constraints.frameRate.max, 30); assert.equal(screen.contentHint, 'detail');
+  assert.equal(peer.screenTransceiver.sender.parameters.encodings[0].maxBitrate, 20000000);
+});
+test('failed live quality changes restore constraints and retain both media tracks', async t => {
+  const f = await fixture(t); await f.call.join('room', { video: true }); await f.call.toggleScreen();
+  const camera = f.call.currentCameraTrack(), screen = f.call.currentScreenTrack(); camera.constraints = { width: { ideal: 1920 } };
+  screen.applyConstraints = async value => { if (value.height?.ideal === 2160) throw new Error('Quality unavailable'); screen.constraints = value; };
+  await assert.rejects(f.call.applyMediaPreferences({ cameraResolution: '720', screenResolution: '2160' }), /Quality unavailable/);
+  assert.deepEqual(camera.constraints, { width: { ideal: 1920 } }); assert.equal(camera.readyState, 'live'); assert.equal(screen.readyState, 'live');
+});
+test('leaving during a device switch stops late tracks and never revives the call', async t => {
+  const f = await fixture(t); await f.call.join('room'); let resolve;
+  f.devices.getUserMedia = () => new Promise(done => { resolve = done; });
+  const switching = f.call.applyMediaPreferences({ microphoneId: 'new' }); f.call.leave(false);
+  const late = track('audio'); resolve(new Stream([late])); await switching;
+  assert.equal(late.readyState, 'ended'); assert.equal(f.call.active, null); assert.equal(f.call.devicePending, false);
+});
+test('pre-call device changes and stage listeners never acquire unnecessary microphone tracks', async t => {
+  let captures = 0; const f = await fixture(t, { canSpeak: false, devices: { async getUserMedia() { captures++; return new Stream([track('audio')]); } } });
+  await f.call.applyMediaPreferences({ microphoneId: 'new' }); assert.equal(captures, 0);
+  await f.call.join('stage'); await f.call.applyMediaPreferences({ microphoneId: 'another' }); assert.equal(captures, 0); assert.equal(f.call.muted, true);
 });

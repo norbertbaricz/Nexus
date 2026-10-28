@@ -6,16 +6,23 @@ export function swipeDirection(dx,dy,distance) {
   return null;
 }
 // Vertical scrolling and text selection stay native; horizontal message swipes reply.
-export function installGestures({enabled,dismissToast,closeModal,closePopover,viewerNavigate,viewerReady,hasConversation,openMembers,canReply,reply,messageOptions}) {
+export function installGestures({enabled,dismissToast,closeModal,closePopover,viewerNavigate,viewerReady,hasConversation,openMembers,canReply,reply,messageOptions,userOptions,contextTarget,contextOptions}) {
   let start=null,hold=0,suppress=null;
   const reset=()=>{clearTimeout(hold);if(start?.kind==='message'){start.node.style.removeProperty('--swipe-x');start.node.classList.remove('swiping');}start=null;};
   document.addEventListener('pointerdown',event=>{
     reset();if(!enabled()||event.pointerType!=='touch'&&event.pointerType!=='pen'||event.isPrimary===false)return;
     const target=event.target,toast=target.closest('.toast'),handle=target.closest('.modal-drag-handle'),viewer=target.closest('.viewer-stage'),app=document.querySelector('#app'),message=target.closest('.message[data-message]');
+    const context=contextTarget?.(target);
     if(toast&&!target.closest('button'))start={kind:'toast',node:toast};
     else if(handle)start={kind:'modal',node:handle};
     else if(viewer&&viewerReady()&&!target.closest('button,video,audio'))start={kind:'viewer',node:viewer};
-    else if(message&&!target.closest('button,a,input,textarea,select,video,audio')&&!document.querySelector('#modal-root .modal')&&document.getSelection()?.isCollapsed!==false){
+    else if(contextOptions&&context&&(context.kind!=='message'||!message)){
+      start={kind:'context',node:context.node,context};const current=start;
+      hold=setTimeout(()=>{if(start!==current)return;suppress={node:current.node,until:Date.now()+CONFIG.messageHoldMs};contextOptions(current.context);reset();},CONFIG.messageHoldMs);
+    } else if(userOptions&&target.closest('.voice-tile[data-user-id], [data-action=profile][data-id]')&&!target.closest('input,textarea,select,video,audio,[data-action=participant-menu]')) {
+      const node=target.closest('.voice-tile[data-user-id], [data-action=profile][data-id]');start={kind:'person',node,userId:node.dataset.userId||node.dataset.id};const current=start;
+      hold=setTimeout(()=>{if(start!==current)return;suppress={node,until:Date.now()+CONFIG.messageHoldMs};userOptions(current.userId,node);reset();},CONFIG.messageHoldMs);
+    } else if(message&&!target.closest('button,a,input,textarea,select,video,audio')&&!document.querySelector('#modal-root .modal')&&document.getSelection()?.isCollapsed!==false){
       start={kind:'message',node:message,messageId:message.dataset.message};const current=start;
       hold=setTimeout(()=>{if(start!==current)return;suppress={node:message,until:Date.now()+CONFIG.messageHoldMs};messageOptions?.(current.messageId);reset();},CONFIG.messageHoldMs);
     } else if(window.innerWidth<=CONFIG.mobileBreakpoint&&!document.querySelector('#modal-root .modal')&&!target.closest('input,textarea,button,a,select,[contenteditable=true]')) {
@@ -46,5 +53,7 @@ export function installGestures({enabled,dismissToast,closeModal,closePopover,vi
     else if(current.kind==='right-close'&&direction==='right')current.node.classList.remove('show-members');
   },{passive:true});
   document.addEventListener('pointercancel',reset,{passive:true});
-  for(const type of ['click','contextmenu'])document.addEventListener(type,event=>{if(suppress&&Date.now()<suppress.until&&suppress.node.contains(event.target)){event.preventDefault();event.stopImmediatePropagation();}},{capture:true});
+  for(const type of ['click','contextmenu'])document.addEventListener(type,event=>{if(suppress&&Date.now()<suppress.until&&suppress.node.contains(event.target)){event.preventDefault();event.stopImmediatePropagation();}
+    else if(type==='contextmenu'&&start&&['person','context','message'].includes(start.kind)){suppress={node:start.node,until:Date.now()+CONFIG.messageHoldMs};reset();}
+  },{capture:true});
 }

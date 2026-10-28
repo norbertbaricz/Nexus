@@ -186,6 +186,40 @@ function openDatabase(filename) {
     addColumns('audit_log', { metadata: "TEXT NOT NULL DEFAULT '{}'" });
     db.exec('PRAGMA user_version = 9');
   });
+  transaction(db, () => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS account_security (
+        userId TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        email TEXT COLLATE NOCASE UNIQUE, verifiedAt INTEGER,
+        pendingEmail TEXT, pendingAt INTEGER NOT NULL DEFAULT 0,
+        resetRequestedAt INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS account_tokens (
+        hash TEXT PRIMARY KEY, userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        purpose TEXT NOT NULL CHECK (purpose IN ('verify','reset')),
+        targetEmail TEXT NOT NULL, createdAt INTEGER NOT NULL, expiresAt INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS account_tokens_user ON account_tokens(userId,purpose);
+      CREATE INDEX IF NOT EXISTS account_tokens_expiry ON account_tokens(expiresAt);
+      CREATE TABLE IF NOT EXISTS recovery_codes (
+        hash TEXT PRIMARY KEY, userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        createdAt INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS recovery_codes_user ON recovery_codes(userId);
+      PRAGMA user_version = 10;
+    `);
+  });
+  transaction(db, () => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS support_recovery_tokens (
+        hash TEXT PRIMARY KEY, userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        passwordFingerprint TEXT NOT NULL, createdAt INTEGER NOT NULL, expiresAt INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS support_recovery_user ON support_recovery_tokens(userId);
+      CREATE INDEX IF NOT EXISTS support_recovery_expiry ON support_recovery_tokens(expiresAt);
+      PRAGMA user_version = 11;
+    `);
+  });
   return db;
 }
 

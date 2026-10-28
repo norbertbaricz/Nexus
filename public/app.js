@@ -1,4 +1,7 @@
+import { contextMenuModel, contextMenuMarkup, resolveContextTarget, CONTEXT_MENU_CONFIG } from './context-menu.js';
 import { auditEntryMarkup } from './audit.js';
+import { authScreenMarkup, accountSecurityMarkup, recoveryEmailFormMarkup, recoveryCodesFormMarkup, recoveryCodesMarkup, readRecoveryFragment, SECURITY_UI_CONFIG } from './security-ui.js';
+import { ClientUpdates, CLIENT_METADATA } from './client-update.js';
 import { DiscoverySearch } from './discovery.js';
 import { Tooltips } from './tooltips.js';
 import { CHAT_CONFIG, CHANNEL_TYPES, isVoice, isForum, isCollection, mentionMatch, uploadFile, normalizeUsernameQuery } from './chat-tools.js';
@@ -19,6 +22,9 @@ import { applyPalette } from './appearance.js';
 import { emojiPicker, emojiGrid, EMOJI_CATEGORIES, searchGiphy } from './pickers.js';
 import { icon, nexusLogo } from './icons.js';
 import { NexusCall } from './rtc.js';
+import { MediaPreferences, MEDIA_DEFAULTS, mediaError } from './media-devices.js';
+import { PARTICIPANT_AUDIO_CONFIG } from './participant-audio.js';
+import { deviceOptionsMarkup, mediaMenuMarkup, participantMenuMarkup, qualitySummary } from './media-ui.js';
 import { NexusSounds } from './sounds.js';
 import * as UI from './ui.js';
 import * as CommunityUI from './community-ui.js';
@@ -31,7 +37,8 @@ const e = UI.escape;
 const readLocal = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } };
 let preferences = { ...DEFAULT_PREFERENCES, ...readLocal(CONFIG.preferencesKey, {}) };
 let state = {
-  user: null, users: [], blockedIds: [], servers: [], dms: [], voice: [], config: { ...CONFIG },
+  clientVersion: CLIENT_METADATA.version,
+  screenCaptureAvailable: typeof navigator.mediaDevices?.getDisplayMedia === 'function', user: null, users: [], blockedIds: [], servers: [], dms: [], voice: [], config: { ...CONFIG },
   forumLayout:preferences.forumLayout, revealedSpoilers:new Set(), collectionLayout: preferences.mediaLayout, lastDM: null, lastChannels: {}, activeThread: null, historyWindow: false, pins: [], collapsedCategories: preferences.collapsedCategories, activeServer: null, activeConv: null, view: 'home', homeTab: 'inbox', messages: [], hasMore: false,
   loadingMessages: false, discovery: [], discoveryLoading: false, discoveryError: false, mediaFocus: null, audioBlocked: false, connected: false, sending: false, pending: [], replyTo: null,
 };
@@ -79,15 +86,34 @@ let serverMemberId = null;
 let discoveryUpdatedAt = 0;
 let previousCallId = null;
 let settingsTab = 'profile';
+let securityRevision = 0;
+let recoveryProof = null;
+let displayedRecoveryCodes = [];
+let contextSelection = null;
 let incomingCall = null;
+let speakerTest = null;
 let searchResults = [];
 let searchRevision = 0;
 let searchTimer;
 let lastTyping = 0;
 const typingUsers = new Map();
 const getCall = () => call;
+const mediaPreferences = new MediaPreferences({
+  storage: (() => { try { return localStorage; } catch { return null; } })(),
+  onApply: async (next, previous, { keys }) => {
+    if (keys.includes('speakerId')) await mediaView.output.setDevice(next.speakerId);
+    else {
+      if (keys.includes('microphoneId') && !call.active) await mediaPreferences.prepare('microphone', next);
+      if (keys.includes('cameraId') && !call.video) await mediaPreferences.prepare('camera', next);
+      await call.applyMediaPreferences(next, previous);
+    }
+  },
+  onChange: snapshot => { state.mediaSettings = snapshot; refreshMediaControls(); },
+});
+state.mediaSettings = mediaPreferences.snapshot();
 const call = new NexusCall({
   getSocket:()=>socket,getConfig:()=>state.config,
+  getMediaSettings:()=>mediaPreferences.preferences,
   getMediaAllowed:(conversationId,kind='camera')=>{
     const server=state.servers.find(server=>server.channels.some(channel=>channel.id===conversationId)),channel=server?.channels.find(channel=>channel.id===conversationId);
     return !server || (channel.type!=='stage'||UI.hasServerPermission(server,'manageChannels')) && (channel.allowMedia!==false||UI.hasServerPermission(server,'manageChannels')) && UI.hasServerPermission(server,kind==='screen'?'shareScreen':'useVideo');
@@ -97,10 +123,15 @@ const call = new NexusCall({
   getPeerAllowed:userId=>!state.blockedIds.includes(userId),onChange:()=>renderCall(),onIncoming:payload=>showIncomingCall(payload),onError:message=>toast(message,true)
 });
 const sounds = new NexusSounds({ getSettings: () => preferences, isQuiet: () => call.deafened || state.user?.preferredStatus === 'dnd' || state.user?.status === 'dnd', isFeedbackQuiet: () => state.user?.preferredStatus === 'dnd' || state.user?.status === 'dnd' });
-const mediaView = new NexusMediaView({ getState: () => ({ ...state, socketId: socket?.id }), getCall: () => call, getSocketId: () => socket?.id, getRoot: () => $('#main'), getMediaRoot: () => $('#media-root'), onPlaybackBlocked: blocked => { state.audioBlocked = blocked; if (state.view === 'voice') mediaView.update(); } });
+const mediaView = new NexusMediaView({ getState: () => ({ ...state, socketId: socket?.id }), getCall: () => call, getSocketId: () => socket?.id, getRoot: () => $('#main'), getMediaRoot: () => $('#media-root'), storage: (() => { try { return localStorage; } catch { return null; } })(), onOutputError: message => toast(message, true), onPlaybackBlocked: blocked => { state.audioBlocked = blocked; if (state.view === 'voice') mediaView.update(); } });
 const panels=new SidebarResize({getPreferences:()=>preferences,onSave:()=>savePreferences()});
 const imageViewer=new ImageViewer({getState:()=>state,showModal,request,toast,escape:e,canDownload:file=>UI.canDownload(state,file)});
 const notices=new Notices($('#toasts'));
+const clientUpdates = new ClientUpdates({ onUpdate: () => {
+  if (canRefreshClient()) location.reload();
+  else notices.show('A new Nexus version is ready.', false, { duration: 0, action: { name: 'reload-client', label: 'Reload' } });
+} });
+function canRefreshClient() { return Boolean(state.user) && !call.active && !call.joining && !modalType && !state.sending && !state.pending.length && !imageUploads; }
 const artworkEditor=new ArtworkEditor();
 const selectMenus=new SelectMenus($('#modal-root'));
 const tooltips=new Tooltips();
@@ -237,9 +268,14 @@ function refreshWorkspace() {
   return task;
 }
 async function loadWorkspace() {
+  ++securityRevision;state.accountSecurity=null;state.securityLoading=false;displayedRecoveryCodes=[];
   state.lastChannels = {};
   state.config = await request('/api/config');
   await refreshWorkspace();
+  mediaPreferences.attach(state.user.id);
+  mediaView.audio.attach(state.user.id);
+  // A revoked saved output stays silent until selected again; never leak call audio to another device.
+  mediaView.output.restore(mediaPreferences.preferences.speakerId);
   call.setAudioState(readLocal(`${CONFIG.audioStatePrefix}${state.user.id}`,{}));
   state.connected = false;
   $('#auth-screen')?.remove();
@@ -275,6 +311,7 @@ async function connectRealtime() {
       await refreshWorkspace();
       if (state.view === 'chat'&&followChat) await loadMessages(state.activeConv, true);
       renderChrome();syncConnectionBanner();preferenceSync.flush();sendActivity(true);
+      clientUpdates.check();
       if (call.resumeAfterReconnect) await call.reconnect();
     } catch (error) { toast(error.message, true); }
   });
@@ -501,6 +538,7 @@ setInterval(renderTyping, 1500);
 function showModal(content, { type = 'generic', wide = false, profile = false } = {}) {
   dismissConfirmation();closePopover();tooltips.hide();
   if(modalType==='image-viewer'&&type!==modalType)imageViewer.close();
+  if(modalType==='recovery-codes'&&type!==modalType)displayedRecoveryCodes=[];
   if(modalType==='server-settings'&&$('#server-settings-page'))serverSettingsScroll.set(serverSettingsTab,$('#server-settings-page').scrollTop);
   if (modalType !== type) modalDirty = false;
   $('#app').inert = true; $('#app').setAttribute('aria-hidden', 'true');
@@ -529,16 +567,18 @@ function closeModal(keepCall = false, force = false) {
   if(serverChildReturnTab && state.user){const tab=serverChildReturnTab;serverChildReturnTab=null;modalDirty=false;showServerSettings(tab,true);return;}
   if(['collection-upload','forum-post'].includes(modalType))clearPending();
   selectMenus.close();
+  stopSpeakerTest();
   modalDirty = false; profileDirty=false;serverGeneralDirty=false;serverPoliciesDirty=false;roleDirty=false;memberRoleDrafts={};
   if (modalType === 'incoming') { sounds.stopRing(); if(keepCall)incomingCall = null; }
   if (modalType === 'image-viewer') imageViewer.close();
+  if (modalType === 'recovery-codes') displayedRecoveryCodes=[];
   $('#modal-root').innerHTML = ''; modalType = ''; ++searchRevision; discoverySearch.cancel();tooltips.hide();
   const authenticating = Boolean($('#auth-screen')); $('#app').inert = authenticating;
   if (authenticating) $('#app').setAttribute('aria-hidden', 'true'); else $('#app').removeAttribute('aria-hidden');
   if (modalPreviousFocus?.isConnected) modalPreviousFocus.focus({preventScroll:true});
 }
 function formError(message) { toast(message, true); const node = $('#dialog-guard-root #form-error') || $('#form-error'); if (node) node.innerHTML = `<p class="form-error" role="alert">${e(message)}</p>`; }
-function closePopover() { clearTimeout(gifSearchTimer); gifRequest?.abort(); gifRequest=null; ++gifRevision; popoverResizeObserver?.disconnect(); popoverAnchor=null; $('#popover-root').innerHTML = ''; }
+function closePopover() { const restore = $('#popover-root [data-participant-menu], #popover-root [data-context-menu]') && $('#popover-root').contains(document.activeElement) ? popoverAnchor : null; clearTimeout(gifSearchTimer); gifRequest?.abort(); gifRequest=null; ++gifRevision; popoverResizeObserver?.disconnect(); popoverAnchor=null; contextSelection=null; $('#popover-root').innerHTML = ''; if(restore?.isConnected)restore.focus?.({preventScroll:true}); }
 function popover(content, anchor, width = 205) {
   closePopover();
   popoverAnchor=anchor;popoverWidth=width;
@@ -638,7 +678,7 @@ function showSettings(tab = 'profile', keepDraft = false) {
   if (!keepDraft) {profileDraft={...state.user};profileDirty=false;settingsScroll.clear();}
   const stable=modalType==='settings'&&$('#settings-page');
   if(stable) {
-    if(settingsTab===tab){refreshSettingsControls();return;}
+    if(settingsTab===tab){refreshSettingsControls();if(tab==='account')loadAccountSecurity();return;}
     settingsScroll.set(settingsTab,$('#settings-page').scrollTop);
     settingsTab=tab;$('#settings-page').innerHTML=UI.settingsPageMarkup(state,tab,preferences,profileDraft);
     for(const node of document.querySelectorAll('#modal-root [data-action=settings-tab]')){const selected=node.dataset.tab===tab;node.classList.toggle('active',selected);node.setAttribute('aria-selected',String(selected));}
@@ -646,7 +686,55 @@ function showSettings(tab = 'profile', keepDraft = false) {
     $(`#modal-root [data-action=settings-tab][data-tab=${tab}]`)?.focus({preventScroll:true});
   } else {settingsTab=tab;showModal(UI.settingsMarkup(state,tab,preferences,profileDraft),{type:'settings',wide:true});}
   refreshSettingsControls();
+  if (tab === 'media') { refreshMediaControls(); mediaPreferences.refresh().catch(error => toast(mediaError(error), true)); }
+  if (tab === 'account') loadAccountSecurity();
 }
+function refreshMediaControls() {
+  const model = state.mediaSettings; if (!model) return;
+  const menu = $('#popover-root [data-media-menu]');
+  if (menu) { syncMarkup($('#popover-root .popover'), mediaMenuMarkup(menu.dataset.mediaMenu, model)); positionPopover(); }
+  for (const select of document.querySelectorAll('#settings-page [data-media-device]')) {
+    const markup = deviceOptionsMarkup(select.dataset.mediaDevice, model);
+    if (select._deviceOptions !== markup) { select.innerHTML = markup; select._deviceOptions = markup; }
+  }
+  for (const input of document.querySelectorAll('#settings-page [data-media-setting]')) {
+    const value = model.preferences[input.dataset.mediaSetting];
+    if (input.type === 'checkbox') input.checked = value; else input.value = value;
+    input.disabled = model.busy || input.dataset.mediaDevice === 'speaker' && !model.outputSupported || ['microphone','camera'].includes(input.dataset.mediaDevice) && !model.captureSupported;
+    if (input.tagName === 'SELECT') selectMenus.sync(input);
+  }
+  for (const button of document.querySelectorAll('#settings-page [data-action^=media-]')) {
+    button.disabled = model.busy;
+  }
+  for (const node of document.querySelectorAll('.media-inline-error')) { node.hidden = !model.error; node.textContent = model.error; }
+  for (const node of document.querySelectorAll('[data-quality-summary]')) node.textContent = qualitySummary(node.dataset.qualitySummary, model.preferences);
+  refreshCaptureStatus();
+}
+function refreshCaptureStatus() {
+  for (const node of document.querySelectorAll('[data-capture-status]')) {
+    const track = node.dataset.captureStatus === 'camera' ? call.currentCameraTrack() : call.currentScreenTrack(), actual = track?.getSettings?.();
+    node.textContent = actual?.width && actual?.height ? `Capture: ${actual.width} × ${actual.height}${actual.frameRate ? ` · ${Math.round(actual.frameRate)} FPS` : ''}` : '';
+  }
+}
+async function playSpeakerTest() {
+  stopSpeakerTest();
+  // A short original sine chime, played through an HTML audio element for setSinkId support.
+  const sampleRate = 22050, samples = Math.round(sampleRate * .55), buffer = new ArrayBuffer(44 + samples * 2), bytes = new DataView(buffer);
+  const text = (offset, value) => { for (let i = 0; i < value.length; i++) bytes.setUint8(offset + i, value.charCodeAt(i)); };
+  text(0, 'RIFF'); bytes.setUint32(4, 36 + samples * 2, true); text(8, 'WAVE'); text(12, 'fmt '); bytes.setUint32(16, 16, true); bytes.setUint16(20, 1, true); bytes.setUint16(22, 1, true); bytes.setUint32(24, sampleRate, true); bytes.setUint32(28, sampleRate * 2, true); bytes.setUint16(32, 2, true); bytes.setUint16(34, 16, true); text(36, 'data'); bytes.setUint32(40, samples * 2, true);
+  for (let i = 0; i < samples; i++) { const time = i / sampleRate, envelope = Math.min(1, time / .03) * Math.max(0, 1 - time / .55); bytes.setInt16(44 + i * 2, Math.sin(2 * Math.PI * 440 * time) * envelope * 6500, true); }
+  const url = URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' })), audio = document.createElement('audio');
+  speakerTest = { audio, url }; audio.src = url; audio.hidden = true; document.body.append(audio);
+  audio.onended = () => { if (speakerTest?.audio === audio) stopSpeakerTest(); };
+  try {
+    const deviceId = mediaPreferences.preferences.speakerId;
+    if (audio.setSinkId) await audio.setSinkId(deviceId);
+    else if (deviceId) throw new Error('Choose your speakers through your system sound settings in this browser.');
+    if (speakerTest?.audio !== audio) return;
+    await audio.play();
+  } catch (error) { if (speakerTest?.audio === audio) stopSpeakerTest(); throw new Error(mediaError(error)); }
+}
+function stopSpeakerTest() { if (!speakerTest) return; speakerTest.audio.pause(); speakerTest.audio.remove(); URL.revokeObjectURL(speakerTest.url); speakerTest = null; }
 function updateProfileCard() {
   for(const button of document.querySelectorAll('[data-action=profile-crop], [data-action=remove-profile-image]'))button.disabled=!profileDraft?.[button.dataset.kind];
   const profileCard = $('#profile-card-content'); if (profileCard) syncMarkup(profileCard,UI.profileCard(profileDraft,{editable:true}));
@@ -705,6 +793,7 @@ function renderDock() {
   dock.innerHTML = `<div class="dock-info">${icon('voice', 15)}<strong>In voice room</strong><button class="icon-button" data-action="leave-voice" aria-label="Disconnect">${icon('hangup', 15)}</button></div><button data-action="return-to-call">${e(UI.conversationName(state, current.active.conversationId))} ${icon('arrow', 11)}</button>`;
 }
 function renderCall() {
+  refreshCaptureStatus();
   if(state.user){const controls=$('#sidebar .user-controls');if(controls)syncMarkup(controls,UI.userControls(call));}
   const activeId = call.active?.conversationId || null;
   if (activeId !== previousCallId) {
@@ -717,14 +806,18 @@ function renderCall() {
 }
 function bindMedia() { mediaView.bind(); }
 async function joinVoice(video = false, invite = false) {
-  if (!state.activeConv || call.joining) return;
+  if (!state.activeConv || call.joining || mediaView.preparingAudio) return;
   const target = state.activeConv;
   const timeout=activeTimeout(UI.currentServer(state));if(timeout){showModerationRestriction({...timeout,serverName:UI.currentServer(state).name});return;}
-  Object.assign(state.config, await request('/api/config'));
-  toast(call.getCanSpeak(target) ? 'Waiting for microphone access…' : 'Joining as a stage listener…');
-  await call.join(target, { video, invite });
-  if (target === state.activeConv) state.view = 'voice';
-  renderAll();
+  mediaView.preparingAudio=true;mediaView.audio.unlock();
+  try {
+    Object.assign(state.config, await request('/api/config'));
+    toast(call.getCanSpeak(target) ? 'Waiting for microphone access…' : 'Joining as a stage listener…');
+    await call.join(target, { video, invite });
+    await mediaPreferences.refresh();
+    if (target === state.activeConv) state.view = 'voice';
+    renderAll();
+  } finally { mediaView.preparingAudio=false;if(!call.active)mediaView.bind(); }
 }
 function showIncomingCall(payload) {
   if(state.blockedIds.includes(payload.user.id))return;
@@ -734,16 +827,42 @@ function showIncomingCall(payload) {
   if (!state.users.some(u => u.id === payload.user.id)) state.users.push(payload.user);
   showModal(`<div style="text-align:center;padding-top:12px">${UI.avatar(payload.user, { status: true })}<h2 id="modal-title" style="margin:20px 0 10px">${e(payload.user.displayName)}</h2><p class="modal-description">${payload.video ? 'Incoming video call.' : 'Incoming voice call.'}</p><div class="modal-footer" style="justify-content:center"><button class="button-danger" data-action="decline-call">${icon('hangup', 17)}Decline</button><button class="button-primary" data-action="accept-call">${icon(payload.video ? 'video' : 'phone', 17)}Answer</button></div></div>`, { type: 'incoming' });
 }
-function showAuth(mode = 'login', error = '') {
-  composerResizeObserver?.disconnect();preferenceSync.detach();
-  document.title = mode === 'register' ? 'Nexus · Create account' : 'Nexus · Sign in';
-  closeModal(true); closePopover();
-  $('#app').inert = true; $('#app').setAttribute('aria-hidden', 'true');
-  $('#auth-screen')?.remove();
-  const register = mode === 'register';
-  const node = document.createElement('div'); node.id = 'auth-screen'; node.className = 'auth-screen';
-  node.innerHTML = `<section class="auth-art"><div class="auth-brand">${nexusLogo()}nexus<span class="auth-brand-caption">NEXUS COMMUNICATIONS</span></div><div><h1>Your world.<br>Connected.</h1><p>Bring your communities, messages and calls into one connected workspace.</p></div></section><div class="auth-form-wrap"><form class="auth-form" data-form="${register ? 'register' : 'login'}"><div class="eyebrow" style="margin-bottom:20px">${register ? 'NEXUS' : 'NEXUS'}</div><h2>${register ? 'Create account' : 'Welcome back.'}</h2><p>${register ? 'Create an account to start chatting.' : 'Sign in to your account.'}</p>${register ? '<label for="auth-name">Display name</label><input name="displayName" id="auth-name" maxlength="32" autocomplete="nickname" placeholder="Your display name" required>' : ''}<label for="auth-user">USERNAME</label><input name="username" id="auth-user" minlength="3" maxlength="24" autocomplete="username" placeholder="Username" required>${register ? `<p class="field-hint">Your username is permanent. People find you with it. You can change your display name anytime.</p><label class="creator-claim-label" for="creator-claim" hidden>Creator claim token</label><input id="creator-claim" name="creatorClaimToken" type="password" autocomplete="off" hidden>` : ''}<label for="auth-password">PASSWORD</label><input type="password" id="auth-password" name="password" minlength="${register ? state.config.minPasswordLength || 10 : 1}" maxlength="128" autocomplete="${register ? 'new-password' : 'current-password'}" placeholder="${register ? 'At least 10 characters' : 'Your password'}" required><div id="form-error">${error ? `<p class="form-error">${e(error)}</p>` : ''}</div><button class="button-primary full-width" type="submit">${register ? 'Create your account' : 'Sign in'} ${icon('arrow', 15)}</button><div class="auth-switch">${register ? 'Already have an account?' : 'New to Nexus?'}<button type="button" data-action="auth-switch" data-mode="${register ? 'login' : 'register'}">${register ? 'Sign in' : 'Create account'}</button></div></form></div>`;
-  document.body.append(node);
+function showAuth(mode = 'login', error = '', notice = '') {
+  composerResizeObserver?.disconnect();preferenceSync.detach();clearTimeout(reconnectTimer);
+  if(!['reset-password','verify-email'].includes(mode))recoveryProof=null;
+  document.title = mode==='register'?'Nexus · Create account':mode==='login'?'Nexus · Sign in':'Nexus · Account recovery';
+  closeModal(true,true);closePopover();
+  $('#app').inert=true;$('#app').setAttribute('aria-hidden','true');$('#auth-screen')?.remove();
+  const node=document.createElement('div');node.id='auth-screen';node.className='auth-screen';
+  node.innerHTML=authScreenMarkup(mode,state.config,{error,notice,emailMode:Boolean(state.config.passwordRecovery?.emailAvailable)});
+  document.body.append(node);syncConnectionBanner();
+}
+function enterRecoveryLink() {
+  const proof=readRecoveryFragment(location.hash);if(!proof)return false;
+  recoveryProof=proof;history.replaceState(null,'',location.pathname+location.search);
+  sounds.stopAll();socket?.disconnect();call.leave(false);state.user=null;state.connected=false;
+  showAuth(proof.mode);return true;
+}
+async function loadAccountSecurity() {
+  if(!state.user)return;
+  const revision=++securityRevision,userId=state.user.id;
+  state.securityLoading=true;
+  try {
+    const value=await request('/api/account/security');
+    if(revision!==securityRevision||state.user?.id!==userId)return;
+    state.accountSecurity=value;state.securityLoading=false;
+    const panel=$('#account-security-panel');if(modalType==='settings'&&settingsTab==='account'&&panel)syncMarkup(panel,accountSecurityMarkup(value));
+  } catch(error) {
+    if(revision!==securityRevision||state.user?.id!==userId)return;
+    state.securityLoading=false;const panel=$('#account-security-panel');
+    if(panel)panel.innerHTML=`<section class="account-security"><h3>Account recovery</h3><p class="form-error" role="alert">${e(error.message)}</p><button class="button-secondary" data-action="refresh-account-security">Try again</button></section>`;
+  }
+}
+function returnAccountSecurity() { modalDirty=false;displayedRecoveryCodes=[];showSettings('account',true); }
+function downloadRecoveryCodes() {
+  if(!displayedRecoveryCodes.length||!state.user)return;
+  const text=`Nexus recovery codes\nAccount: @${state.user.username}\n\nEach code can reset your password. Keep these private.\nNew codes and password recovery invalidate previous codes.\n\n${displayedRecoveryCodes.join('\n')}\n`;
+  const url=URL.createObjectURL(new Blob([text],{type:'text/plain;charset=utf-8'})),link=document.createElement('a');link.href=url;link.download=SECURITY_UI_CONFIG.codeFilename;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),CONFIG.downloadUrlLifetimeMs);
 }
 async function uploadFiles(files, purpose = 'attachment', serverId = null, onProgress, signal) {
   const uploaded = [];
@@ -781,10 +900,28 @@ document.addEventListener('click', async event => {
   if (!$('#popover-root').contains(event.target)) closePopover();
   if (event.target.classList.contains('modal-overlay')) { if (!['settings','server-settings','channel-settings','category'].includes(modalType)) closeModal(); return; }
   if (!button || button.disabled) return;
-  const action = button.dataset.action, id = button.dataset.id;
-  if(['profile-upload','server-upload','profile-crop','server-crop','remove-profile-image','remove-server-image'].includes(action))closePopover();
+  let action = button.dataset.action, id = button.dataset.id, actionAnchor=button;
+  if(button.closest('[data-participant-menu]')&&!['participant-mute','participant-reset','close-picker'].includes(action))closePopover();
+  if(!button.dataset.contextKey&&['profile-upload','server-upload','profile-crop','server-crop','remove-profile-image','remove-server-image'].includes(action))closePopover();
   try {
+    if(button.dataset.contextKey){
+      const selection=contextSelection;
+      const option=contextMenuModel(contextMenuState(),selection,contextCapabilities())?.items.find(item=>item.key===button.dataset.contextKey);
+      if(!option){closePopover();return;}
+      const source=selection.node,rect=button.getBoundingClientRect();
+      actionAnchor={get isConnected(){return source?.isConnected;},focus:options=>source?.focus?.(options),getBoundingClientRect:()=>rect};
+      action=option.action;id=option.id;
+      for(const key of ['id','serverId','value','kind','index','direction','status'])if(option[key]!==undefined)button.dataset[key]=String(option[key]);
+      closePopover();
+      if(option.serverId&&state.activeServer!==option.serverId)await selectServer(option.serverId);
+    }
     switch (action) {
+      case 'reload-client':
+        if (canRefreshClient()) location.reload();
+        else { const effects = [call.active || call.joining ? 'end your current call' : '', modalDirty || profileDirty ? 'discard unsaved settings' : '', state.pending.length || imageUploads ? 'discard pending uploads' : '', state.sending ? 'interrupt the message being sent' : ''].filter(Boolean);
+          showConfirmation(`<h2 id="confirmation-title">Reload Nexus?</h2><p class="modal-description">${effects.length ? `Reloading will ${e(effects.join(' and '))}.` : 'The interface will reload to the current version.'} Sent messages remain saved.</p><div class="confirmation-actions"><button class="button-secondary" data-action="dismiss-confirmation">Keep using Nexus</button><button class="button-primary" data-action="confirm-client-reload">Reload Nexus</button></div>`, 'client-update'); }
+        break;
+      case 'confirm-client-reload': location.reload(); break;
       case 'home': state.homeTab = 'spaces'; state.activeThread = null; selectHome(); break;
       case 'inbox': state.homeTab = 'inbox'; selectHome(); break;
       case 'community-home': selectHome(true); break;
@@ -851,6 +988,15 @@ document.addEventListener('click', async event => {
         const server = UI.currentServer(state);
         popover(`<button class="popover-item" data-action="community-home">${icon('home')}Server overview</button><button class="popover-item" data-action="server-rules">${icon('book')}Rules</button>${UI.hasServerPermission(server,'inviteMembers') ? `<button class="popover-item" data-action="invite">${icon('link')}Invite people</button>` : ''}${UI.hasServerPermission(server,'manageChannels') ? `<button class="popover-item" data-action="add-channel">${icon('plus')}Create channel</button><button class="popover-item" data-action="new-category">${icon('folder')}Create category</button>` : ''}${CommunityUI.MANAGEMENT_KEYS.some(key=>UI.hasServerPermission(server,key)) ? `<button class="popover-item" data-action="server-settings">${icon('settings')}Server settings</button>` : ''}<div class="popover-divider"></div>${server.role==='owner'?`<button class="popover-item danger" data-action="delete-server" data-id="${e(server.id)}">${icon('trash')}Delete server</button>`:`<button class="popover-item danger" data-action="leave-server">${icon('logout')}Leave server</button>`}`,button,250); break;
       }
+      case 'context-copy': await navigator.clipboard.writeText(button.dataset.value);toast('Copied.');break;
+      case 'copy-user-username': {const user=state.users.find(user=>user.id===id)||(state.user.id===id?state.user:null);if(user){await navigator.clipboard.writeText('@'+user.username);toast('Username copied.');}break;}
+      case 'context-call-user': await openDM(id);state.view='voice';renderAll();await joinVoice(false,true);break;
+      case 'context-start-call': closeModal();await selectConversation(id);state.view='voice';renderAll();await joinVoice(false,true);break;
+      case 'context-mark-read': {
+        const conversations=button.dataset.kind==='server'?state.servers.find(server=>server.id===id)?.channels.filter(channel=>channel.unread):[state.servers.flatMap(server=>server.channels).concat(state.dms).find(conversation=>conversation.id===id)];
+        try{for(const conversation of conversations||[]){if(!conversation)continue;await request(`/api/conversations/${encodeURIComponent(conversation.id)}/read`,{method:'POST',body:{}});conversation.unread=0;}}
+        finally{renderChrome();}break;
+      }
       case 'profile': showProfile(id); break;
       case 'dismiss-toast': notices.dismiss(button.closest('.toast'));break;
       case 'position-attachment': {const file=state.pending[Number(button.dataset.index)];if(file){const crop=await artworkEditor.open({url:file.localUrl||file.url,crop:file.previewCrop,kind:'attachment',title:'Position image preview'});if(crop&&state.pending.includes(file)){file.previewCrop=crop;renderPending();}}break;}
@@ -893,7 +1039,7 @@ document.addEventListener('click', async event => {
       case 'reply': replyToMessage(id);break;
       case 'cancel-reply': state.replyTo = null; renderPending(); break;
       case 'emoji': case 'react-menu':
-        popover(emojiPicker(action === 'emoji' ? 'insert-emoji' : 'reaction',id || ''),button,364);
+        popover(emojiPicker(action === 'emoji' ? 'insert-emoji' : 'reaction',id || ''),actionAnchor,364);
         $('#emoji-tab-Faces')?.focus({preventScroll:true}); break;
       case 'emoji-category': changeEmojiCategory(button.dataset.category); break;
       case 'close-picker': closePopover(); break;
@@ -921,6 +1067,26 @@ document.addEventListener('click', async event => {
       case 'confirm-delete':
         button.disabled = true; await request(`/api/messages/${encodeURIComponent(id)}`, { method: 'DELETE' }); state.messages = state.messages.filter(m => m.id !== id); renderMessages(); closeModal(); toast('Message removed.'); break;
       case 'settings': case 'edit-profile': showSettings(); break;
+      case 'media-settings': showSettings('media'); break;
+      case 'participant-menu': showParticipantMenu(id,button); break;
+      case 'participant-mute': mediaView.audio.setMuted(id,!mediaView.audio.get(id).muted);mediaView.bind();refreshParticipantMenu();break;
+      case 'participant-reset': mediaView.audio.reset(id);mediaView.bind();refreshParticipantMenu();break;
+      case 'media-menu': {
+        if (!['microphone','speaker','camera','screen'].includes(button.dataset.kind)) break;
+        popover(mediaMenuMarkup(button.dataset.kind, state.mediaSettings), button, 340);
+        refreshCaptureStatus();
+        if(['microphone','camera'].includes(button.dataset.kind))await mediaPreferences.prepare(button.dataset.kind);else await mediaPreferences.refresh(); break;
+      }
+      case 'media-refresh': { const kind = $('#popover-root [data-media-menu]')?.dataset.mediaMenu; if(kind==='microphone'||kind==='camera')await mediaPreferences.prepare(kind);else await mediaPreferences.refresh(); break; }
+      case 'media-speaker-permission': await mediaPreferences.requestSpeaker(); break;
+      case 'media-device': {
+        const kind = button.dataset.kind;
+        if (kind === 'speaker') await mediaPreferences.chooseSpeaker(button.dataset.device);
+        else if (['microphone','camera'].includes(kind)) await mediaPreferences.update({ [`${kind}Id`]: button.dataset.device }, { force: true });
+        await mediaPreferences.refresh(); if (button.isConnected && document.activeElement === document.body) button.focus({ preventScroll: true }); break;
+      }
+      case 'media-quality': if (Object.hasOwn(MEDIA_DEFAULTS, button.dataset.key)) await mediaPreferences.update({ [button.dataset.key]: button.dataset.value }); break;
+      case 'media-test-speaker': await playSpeakerTest(); break;
       case 'settings-tab': if(button.dataset.tab==='blocked')await showBlockedUsers(); else showSettings(button.dataset.tab, true); break;
       case 'choose-icon': {
         const input=document.getElementById(button.dataset.input);if(input){input.value=button.dataset.icon;for(const choice of button.parentElement.querySelectorAll('[data-action=choose-icon]')){const selected=choice===button;choice.classList.toggle('selected',selected);choice.setAttribute('aria-pressed',String(selected));}input.dispatchEvent(new Event('input',{bubbles:true}));}break;
@@ -971,7 +1137,7 @@ document.addEventListener('click', async event => {
         const current = getCall();
         if (!current.active && !['mute','deafen'].includes(action)) { toast('Join a voice room or start a call to use these controls.'); break; }
         const before=action==='mute'?current.muted:current.deafened;
-        if (action === 'mute') call.toggleMute(); else if (action === 'deafen') call.toggleDeafen(); else if (action === 'toggle-video') await call.toggleVideo(); else await call.toggleScreen();
+        if (action === 'mute') call.toggleMute(); else if (action === 'deafen') call.toggleDeafen(); else if (action === 'toggle-video') { await call.toggleVideo(); await mediaPreferences.refresh(); } else await call.toggleScreen();
         const after=action==='mute'?current.muted:current.deafened;
         if(['mute','deafen'].includes(action)&&before!==after)await sounds.feedback(action==='mute'?(after?'mute':'unmute'):(after?'deafen':'undeafen'));
         bindMedia(); renderChrome();
@@ -1013,6 +1179,15 @@ document.addEventListener('click', async event => {
       case 'role-icon-upload': $('#role-icon-input').click();break;
       case 'close-modal': closeModal(); break;
       case 'auth-switch': showAuth(button.dataset.mode); break;
+      case 'forgot-password': if(state.config.passwordRecovery?.emailAvailable)showAuth('forgot');else showAuth('recovery-code','','The host has not enabled email recovery. Use a saved code or choose recovery help below.');break;
+      case 'use-recovery-code': showAuth('recovery-code');break;
+      case 'recovery-support': showAuth('support');break;
+      case 'refresh-account-security': await loadAccountSecurity();break;
+      case 'return-account-security': returnAccountSecurity();break;
+      case 'setup-recovery-email': showModal(recoveryEmailFormMarkup(state.accountSecurity||{}),{type:'security-email',wide:true});break;
+      case 'remove-recovery-email': showModal(recoveryEmailFormMarkup(state.accountSecurity||{},true),{type:'security-email',wide:true});break;
+      case 'generate-recovery-codes': showModal(recoveryCodesFormMarkup(),{type:'security-codes-form',wide:true});break;
+      case 'download-recovery-codes': downloadRecoveryCodes();break;
       case 'logout':
         await request('/api/auth/logout', { method: 'POST', body: {} }); sounds.stopAll(); socket?.disconnect(); call.leave(false); state.user = null; state.lastChannels = {}; showAuth(); break;
 
@@ -1029,6 +1204,21 @@ document.addEventListener('submit', async event => {
     if (imageUploads) throw new Error('Wait for the image upload to finish before saving.');
     if (kind === 'login' || kind === 'register') {
       await request(`/api/auth/${kind}`, { method: 'POST', body }); await loadWorkspace();
+    } else if (kind === 'forgot-password') {
+      const result=await request('/api/auth/forgot-password',{method:'POST',body:{identifier:body.identifier}});
+      showAuth('forgot','',result.message);
+    } else if (kind === 'reset-password') {
+      const result=await request('/api/auth/reset-password',{method:'POST',body:{...body,...(recoveryProof?.mode==='reset-password'?{token:recoveryProof.token}:{})}});
+      recoveryProof=null;showAuth('login','',result.message);
+    } else if (kind === 'verify-recovery-email') {
+      if(recoveryProof?.mode!=='verify-email')throw new Error('This verification link is missing. Open the link from your email again.');
+      await request('/api/auth/verify-email',{method:'POST',body:{token:recoveryProof.token}});recoveryProof=null;showAuth('login','','Your recovery email is verified. You can sign in.');
+    } else if (kind === 'recovery-email' || kind === 'remove-recovery-email') {
+      const result=await request('/api/account/recovery-email',{method:kind==='recovery-email'?'POST':'DELETE',body});
+      state.accountSecurity=result;returnAccountSecurity();toast(kind==='remove-recovery-email'?'Recovery email removed.':result.alreadyVerified?'This recovery email is already verified.':result.verificationSent?'Verification requested. Check your inbox.':'Email saved, but not verified. The host must enable email delivery before you can verify it.');
+    } else if (kind === 'generate-recovery-codes') {
+      const result=await request('/api/account/recovery-codes',{method:'POST',body:{password:body.password}});
+      state.accountSecurity={...result,codes:undefined};modalDirty=false;displayedRecoveryCodes=result.codes;showModal(recoveryCodesMarkup(displayedRecoveryCodes),{type:'recovery-codes',wide:true});
     } else if (kind === 'create-server') {
       const result = await request('/api/servers', { method: 'POST', body }); await refreshWorkspace(); closeModal(); await selectServer(result.id); toast('Server created.');
     } else if (kind === 'delete-server') {
@@ -1086,6 +1276,10 @@ document.addEventListener('input', event => {
       socket.emit('typing', { conversationId: state.activeConv }); lastTyping = Date.now();
     }
   }
+  if (input.dataset.participantVolume) {
+    mediaView.audio.unlock();mediaView.audio.setVolume(input.dataset.participantVolume,input.value);mediaView.bind();
+    const value=mediaView.audio.get(input.dataset.participantVolume).volume;$('#participant-volume-value').textContent=`${value}%`;input.setAttribute('aria-valuetext',`${value} percent`);
+  }
   if (input.id === 'sound-volume') {
     preferences.soundVolume = Math.min(100, Math.max(0, Number(input.value) || 0));
     $('#sound-volume-value').textContent = `${preferences.soundVolume}%`; savePreferences();
@@ -1112,7 +1306,19 @@ document.addEventListener('input', event => {
     profileDraft[input.name] = input.value; updateProfileCard();
   }
 });
-document.addEventListener('change', event => { if (event.target.id === 'role-member') { serverMemberId = event.target.value; showServerSettings('members', true); } });
+document.addEventListener('change', async event => {
+  const input = event.target;
+  if (input.dataset.mediaSetting) {
+    const key = input.dataset.mediaSetting, value = input.type === 'checkbox' ? input.checked : input.value;
+    if (!Object.hasOwn(MEDIA_DEFAULTS, key)) return;
+    const trigger = input.nextElementSibling;
+    try { if (key === 'speakerId') await mediaPreferences.chooseSpeaker(value); else await mediaPreferences.update({ [key]: value }); }
+    catch (error) { refreshMediaControls(); toast(mediaError(error), true); }
+    finally { if (trigger?.matches('.menu-select') && trigger.isConnected && document.activeElement === document.body) trigger.focus({ preventScroll: true }); }
+    return;
+  }
+  if (input.id === 'role-member') { serverMemberId = input.value; showServerSettings('members', true); }
+});
 document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) document.querySelectorAll('.media-expanded').forEach(tile => tile.classList.remove('media-expanded')); });
 document.addEventListener('keydown', event => {
   if(modalType==='image-viewer'&&['ArrowLeft','ArrowRight','+','-'].includes(event.key)){event.preventDefault();if(event.key==='ArrowLeft'||event.key==='ArrowRight')imageViewer.navigate(event.key==='ArrowRight'?1:-1);else imageViewer.zoomBy(event.key==='+'?1:-1);return;}
@@ -1173,19 +1379,23 @@ $('#profile-image-input').addEventListener('change', async event => {
 });
 document.addEventListener('visibilitychange', () => { if (!document.hidden && state.user && state.view === 'chat' && followChat) markRead(state.activeConv); });
 window.addEventListener('beforeunload', () => { sounds.stopAll(); call.leave(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) clientUpdates.check(); });
 window.addEventListener('resize', positionPopover);
 window.visualViewport?.addEventListener('resize',positionPopover);
 window.addEventListener('online', () => {preferenceSync.flush(); if (state.user && !socket?.connected) socket?.connect(); if (call.active) call.retryConnections().catch(error => toast(error.message, true)); });
 installInteractionHelpers();
 applyPreferences();
+clientUpdates.start();
 (async function init() {
   try {
     const health = await fetch('/api/health', { credentials: 'same-origin' });
     if (!health.ok || !(await health.json()).ok) throw new Error('The Nexus server is unavailable. Start it with npm start and reconnect.');
     state.config = { ...CONFIG, ...await request('/api/config') };
+    if(enterRecoveryLink())return;
     await loadWorkspace();
   } catch (error) {
-    showAuth('login', error.message === 'Sign in to continue.' ? '' : error.message);
+    if (error.status === 401) showAuth('login');
+    else { console.error('[Nexus] Startup failed:',error); showAuth('login', error.message); }
   }
 })();
 
@@ -1416,7 +1626,7 @@ function patchUserPresence(user) {
 }
 function syncConnectionBanner() {
   $('#main .connection-bar')?.remove();
-  if (state.connected) { connectionNoticeActive = false; notices.dismiss(connectionNoticeNode); connectionNoticeNode = null; return; }
+  if (state.connected || !state.user || $('#auth-screen')) { connectionNoticeActive = false; notices.dismiss(connectionNoticeNode); connectionNoticeNode = null; return; }
   if (!connectionNoticeActive && state.user) { connectionNoticeActive = true; connectionNoticeNode = toast('Connection lost. Reconnecting… Please wait before sending messages.', true); }
 }
 
@@ -1429,7 +1639,7 @@ function syncVisualViewport() {
 }
 document.addEventListener('focusin',syncVisualViewport);document.addEventListener('focusout',syncVisualViewport);
 syncVisualViewport();window.visualViewport?.addEventListener('resize',syncVisualViewport);window.visualViewport?.addEventListener('scroll',syncVisualViewport);window.addEventListener('resize',syncVisualViewport);
-installGestures({enabled:()=>preferences.gestures!==false&&!artworkEditor.active,dismissToast:node=>notices.dismiss(node),closeModal:()=>closeModal(),closePopover,viewerNavigate:direction=>imageViewer.navigate(direction),viewerReady:()=>modalType==='image-viewer'&&imageViewer.zoom===1&&imageViewer.items.length>1,hasConversation:()=>Boolean(state.activeConv),canReply:()=>Boolean($('#message-input'))&&UI.canWrite(state),reply:replyToMessage,messageOptions:id=>showMessageOptions(id,document.getElementById(`message-${id}`)),openMembers:()=>{preferences[state.view==='voice'?'voiceMembers':'members']=true;savePreferences();$('#app').classList.add('show-members');}});
+installGestures({enabled:()=>preferences.gestures!==false&&!artworkEditor.active,dismissToast:node=>notices.dismiss(node),closeModal:()=>closeModal(),closePopover,viewerNavigate:direction=>imageViewer.navigate(direction),viewerReady:()=>modalType==='image-viewer'&&imageViewer.zoom===1&&imageViewer.items.length>1,hasConversation:()=>Boolean(state.activeConv),canReply:()=>Boolean($('#message-input'))&&UI.canWrite(state),reply:replyToMessage,messageOptions:id=>showMessageOptions(id,document.getElementById(`message-${id}`)),userOptions:showParticipantMenu,contextTarget:target=>resolveContextTarget(target,state.activeServer),contextOptions:target=>showContextMenu(target),openMembers:()=>{preferences[state.view==='voice'?'voiceMembers':'members']=true;savePreferences();$('#app').classList.add('show-members');}});
 
 function roleBody(form){return {name:form.elements.name.value,color:form.elements.color.value,icon:form.elements.icon.value,iconCrop:readCrop(form.elements.iconCrop?.value),displayMembers:Boolean(form.elements.displayMembers?.checked),...CommunityUI.rolePermissionValues(form)};}
 async function saveRole(body,id){return request(`/api/servers/${state.activeServer}/${id==='__owner__'?'owner-role':`roles${id?`/${id}`:''}`}`,{method:id?'PATCH':'POST',body});}
@@ -1450,14 +1660,15 @@ async function adjustCover(){const url=$('#channel-cover-value')?.value;if(!url)
 function setRoleIcon(url,crop){const input=$('#role-icon');if(!input)return;input.value=url;$('#role-icon-crop').value=JSON.stringify(crop);input.dispatchEvent(new Event('input',{bubbles:true}));showServerSettings('roles',true);}
 async function adjustRoleIcon(){const url=$('#role-icon')?.value;if(!url?.startsWith('/files/'))return;const crop=await artworkEditor.open({url,crop:readCrop($('#role-icon-crop').value),kind:'icon',title:'Position role icon'});if(crop)setRoleIcon(url,crop);}
 
-function showMessageOptions(id,anchor){
-        const message = messageForUI(id); if (!message) return;
-        const server = UI.currentServer(state);
-        const own = message.authorId === state.user.id;
-        const owner=UI.hasServerPermission(server,'manageMessages') || isForum(UI.activeConversation(state))&&UI.hasServerPermission(server,'manageTopics');
-        const pin=!server||UI.hasServerPermission(server,'pinMessages'); 
-        popover(`<button class="popover-item" data-action="copy-message" data-id="${e(id)}">${icon('copy',20)}Copy text</button>${pin ? `<button class="popover-item" data-action="pin-message" data-id="${e(id)}">${icon('pin',20)}${message.pinned ? 'Unpin message' : 'Pin message'}</button>` : ''}${own ? `<button class="popover-item" data-action="edit-message" data-id="${e(id)}">${icon('edit')}Edit message</button>` : ''}${own || owner ? `<button class="popover-item danger" data-action="delete-message" data-id="${e(id)}">${icon('trash')}Delete message</button>` : ''}`, anchor);
+function contextMenuState(){return {...state,discovery:[...state.discovery,...discoverySearch.servers]};}
+function contextCapabilities(){return {call:getCall(),profileDraft,serverDraft};}
+function showContextMenu(target,anchor=target?.node){
+  if(target?.kind==='person'){showParticipantMenu(target.id,anchor);return true;}
+  const model=contextMenuModel(contextMenuState(),target,contextCapabilities());if(!model?.items.length)return false;
+  popover(contextMenuMarkup(model),anchor,CONTEXT_MENU_CONFIG.width);contextSelection=target;
+  $('#popover-root [data-context-key]')?.focus({preventScroll:true});return true;
 }
+function showMessageOptions(id,anchor){return showContextMenu({kind:'message',id,node:anchor},anchor);}
 
 function attachmentKey(file){return file.provider?`giphy:${file.providerId}`:file.id||file.gifId;}
 
@@ -1505,3 +1716,44 @@ setInterval(()=>{
   let expired=false;for(const server of state.servers)if(server.moderation?.expiresAt&&server.moderation.expiresAt<=Date.now()){server.moderation=null;if(server.id===state.activeServer)expired=true;}
   if(expired&&state.user)renderMain({preservePosition:true});
 },1000);
+
+function participantOptions(userId) {
+  const server=UI.currentServer(state),membership=server?.members.find(member=>member.userId===userId);
+  return {self:userId===state.user?.id,maximum:mediaView.audio.maximum,
+    canAdjust:Boolean(call.active&&userId!==state.user?.id&&state.voice.some(peer=>peer.userId===userId&&peer.conversationId===call.active.conversationId)),
+    canModerate:Boolean(membership&&membership.role!=='owner'&&userId!==state.user?.id&&['moderateMembers','kickMembers','banMembers','timeoutMembers','disconnectMembers'].some(key=>UI.hasServerPermission(server,key)))};
+}
+function showParticipantMenu(userId,anchor) {
+  if(!state.user||state.blockedIds.includes(userId))return;
+  const user=userFor(userId);if(!user?.id)return;
+  if(call.active)mediaView.audio.unlock();
+  popover(participantMenuMarkup(user,mediaView.audio.get(userId),participantOptions(userId)),anchor,PARTICIPANT_AUDIO_CONFIG.menuWidth);
+  ($('#popover-root input')||$('#popover-root button'))?.focus({preventScroll:true});
+}
+function refreshParticipantMenu() {
+  const menu=$('#popover-root [data-participant-menu]');if(!menu)return;
+  const id=menu.dataset.participantMenu;
+  syncMarkup($('#popover-root .popover'),participantMenuMarkup(userFor(id),mediaView.audio.get(id),participantOptions(id)));positionPopover();
+}
+function openContextOptions(event) {
+  if(!state.user||document.getSelection()?.isCollapsed===false)return false;
+  const target=resolveContextTarget(event.target,state.activeServer);if(!target)return false;
+  const node=target.node;
+  const anchor=event.clientX||event.clientY?{get isConnected(){return node.isConnected;},focus:options=>node.focus?.(options),getBoundingClientRect:()=>({left:event.clientX,top:event.clientY,bottom:event.clientY})}:node;
+  if(!showContextMenu(target,anchor))return false;event.preventDefault();return true;
+}
+document.addEventListener('contextmenu',openContextOptions);
+document.addEventListener('keydown',event=>{
+  const menu=event.target.closest?.('[data-context-menu]');
+  if(menu&&['ArrowDown','ArrowUp','Home','End'].includes(event.key)){
+    event.preventDefault();const options=[...menu.querySelectorAll('[role=menuitem]:not([disabled])')],index=options.indexOf(document.activeElement);
+    const next=event.key==='Home'?0:event.key==='End'?options.length-1:(index+(event.key==='ArrowDown'?1:-1)+options.length)%options.length;options[next]?.focus({preventScroll:true});return;
+  }
+  if(menu&&event.key==='Tab'){closePopover();return;}
+  if(event.key==='ContextMenu'||event.shiftKey&&event.key==='F10')openContextOptions(event);
+});
+document.addEventListener('scroll',event=>{if(contextSelection&&!$('#popover-root').contains(event.target))closePopover();},{capture:true,passive:true});
+document.addEventListener('pointerdown',()=>{if(call.active)mediaView.audio.resume();},{passive:true});
+window.addEventListener('pagehide',()=>mediaView.audio.flush());
+
+window.addEventListener('hashchange',enterRecoveryLink);

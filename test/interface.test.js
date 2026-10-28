@@ -23,6 +23,70 @@ function fixture(type='text'){
  return {config:{maxMessageLength:8000},user,users:[user],servers:[server],dms:[],activeServer:server.id,activeConv:'c_one',messages:[],pins:[],connected:true,revealedSpoilers:new Set(),forumLayout:'grid',collectionLayout:'grid'};
 }
 
+test('sign-in accepts complete copied usernames and recovery forms keep secrets out of markup',async()=>{
+ const security=await browserModule('security-ui.js'),config={minPasswordLength:10};
+ const login=security.authScreenMarkup('login',config,{notice:'<img src=x onerror=alert(1)>'});
+ assert.match(login,/name="username"[^>]*maxlength="128"/);assert.ok(login.includes('Forgot password?'));assert.ok(login.includes('&lt;img'));assert.ok(!login.includes('<img'));
+ const registration=security.authScreenMarkup('register',config);assert.match(registration,/name="username"[^>]*maxlength="24"/);
+ const token='A'.repeat(43);assert.deepEqual(security.readRecoveryFragment('#reset-password='+token),{mode:'reset-password',token});assert.deepEqual(security.readRecoveryFragment('#verify-email='+token),{mode:'verify-email',token});
+ for(const invalid of ['#reset-password=short','#reset-password='+token+'&next=evil','#other='+token])assert.equal(security.readRecoveryFragment(invalid),null);
+ const reset=security.authScreenMarkup('reset-password',config);assert.ok(reset.includes('name="confirmPassword"'));assert.ok(!reset.includes(token));assert.ok(!reset.includes('type="hidden"'));
+ const codes=security.authScreenMarkup('recovery-code',config);assert.ok(codes.includes('name="recoveryCode"'));assert.ok(codes.includes('contact your server administrator'));
+});
+test('private recovery settings escape addresses, require current passwords and support offline codes',async()=>{
+ const security=await browserModule('security-ui.js');
+ const value={email:'<unsafe>@example.test',pendingEmail:'pending@example.test',remainingCodes:8,emailAvailable:false};
+ const panel=security.accountSecurityMarkup(value);assert.ok(panel.includes('&lt;unsafe&gt;'));assert.ok(!panel.includes('<unsafe>'));assert.ok(panel.includes('data-action="generate-recovery-codes"'));assert.ok(panel.includes('data-action="setup-recovery-email"'));assert.ok(!panel.includes('data-action="setup-recovery-email" disabled'));assert.ok(panel.includes('host has not enabled email delivery')); assert.ok(panel.includes('8 codes remaining'));
+ for(const html of [security.recoveryEmailFormMarkup(value),security.recoveryEmailFormMarkup(value,true),security.recoveryCodesFormMarkup()])assert.ok(html.includes('autocomplete="current-password"'));
+ const codes=security.recoveryCodesMarkup(['NXS-<unsafe>']);assert.ok(codes.includes('NXS-&lt;unsafe&gt;'));assert.ok(codes.includes('data-action="download-recovery-codes"'));assert.ok(!codes.includes('<unsafe>'));
+});
+test('context menus follow server permissions and keep destructive actions behind existing confirmations',async()=>{
+ const {contextMenuModel,contextMenuMarkup}=await browserModule('context-menu.js'),state=fixture(),server=state.servers[0];server.name='A <private> server';server.categories=[];
+ let model=contextMenuModel(state,{kind:'server',id:server.id});assert.ok(model.items.some(item=>item.action==='delete-server'));assert.ok(!model.items.some(item=>item.action==='leave-server'));assert.ok(model.items.some(item=>item.action==='server-settings'));
+ const html=contextMenuMarkup(model);assert.ok(html.includes('role="menu"'));assert.ok(html.includes('role="menuitem"'));assert.ok(html.includes('A &lt;private&gt; server'));assert.ok(!html.includes('<private>'));assert.ok(!html.includes('confirm-delete-server'));
+ server.role='member';server.permissions={};model=contextMenuModel(state,{kind:'server',id:server.id});assert.ok(model.items.some(item=>item.action==='leave-server'));assert.ok(!model.items.some(item=>['server-settings','add-channel','delete-server','invite'].includes(item.action)));
+ state.servers=[];state.discovery=[{id:'s_public',name:'Public fixture'}];model=contextMenuModel(state,{kind:'server',id:'s_public'});assert.deepEqual(model.items.map(item=>item.action),['discover-server','context-copy']);
+});
+test('channel, category and DM menus retain the clicked target when another conversation is active',async()=>{
+ const {contextMenuModel}=await browserModule('context-menu.js'),state=fixture(),server=state.servers[0];
+ server.categories=[{id:'cat_one',name:'FIRST'},{id:'cat_two',name:'SECOND'}];server.channels.push({id:'c_voice',serverId:server.id,name:'Voice',type:'voice',unread:2});
+ let model=contextMenuModel(state,{kind:'conversation',id:'c_voice'});assert.equal(model.items.find(item=>item.key==='open').label,'Join voice room');assert.equal(model.items.find(item=>item.key==='settings').id,'c_voice');assert.equal(model.items.find(item=>item.key==='settings').serverId,server.id);
+ state.collapsedCategories={cat_two:true};model=contextMenuModel(state,{kind:'category',id:'cat_two'});assert.equal(model.items.find(item=>item.key==='toggle').label,'Expand category');assert.ok(model.items.some(item=>item.key==='up'));assert.ok(!model.items.some(item=>item.key==='down'));
+ state.users.push({id:'u_peer',username:'peer',displayName:'Peer'});state.dms=[{id:'dm_other',peerId:'u_peer',unread:3}];model=contextMenuModel(state,{kind:'conversation',id:'dm_other'});assert.equal(model.items.find(item=>item.key==='delete').id,'dm_other');assert.equal(model.items.find(item=>item.key==='call').id,'dm_other');assert.equal(model.items.find(item=>item.key==='profile').id,'u_peer');
+ state.blockedIds=['u_peer'];assert.equal(contextMenuModel(state,{kind:'conversation',id:'dm_other'}),null);
+});
+test('attachment context actions preserve spoilers and the existing per-channel download policy',async()=>{
+ const {contextMenuModel,contextMenuMarkup}=await browserModule('context-menu.js'),state=fixture(),server=state.servers[0];
+ const message={id:'m_attachment',conversationId:state.activeConv,authorId:state.user.id,text:'A caption',attachments:[{name:'Secret <image>.png',type:'image/png',url:'/files/private',spoiler:true}]};state.messages=[message];
+ const target={kind:'message',id:message.id,index:0};let model=contextMenuModel(state,target);assert.ok(model.items.some(item=>item.key==='reveal'));assert.ok(!model.items.some(item=>['view','download','filename'].includes(item.key)));assert.ok(!contextMenuMarkup(model).includes('/files/private'));
+ state.revealedSpoilers.add(message.id+':0');model=contextMenuModel(state,target);assert.ok(model.items.some(item=>item.key==='view'));assert.ok(!model.items.some(item=>item.key==='download'));
+ server.channels[0].type='media';assert.ok(contextMenuModel(state,target).items.some(item=>item.key==='download'));
+ server.role='member';server.permissions={downloadFiles:false,sendMessages:false};assert.ok(!contextMenuModel(state,target).items.some(item=>item.key==='download'));
+});
+test('forum menus open posts, self menus expose status, and artwork choices require editable ownership',async()=>{
+ const {contextMenuModel}=await browserModule('context-menu.js'),ui=await browserModule('ui.js'),state=fixture('forum');
+ state.messages=[{id:'m_forum',authorId:state.user.id,text:'A post',createdAt:'2026-01-01',attachments:[],replyCount:0}];assert.ok(ui.forumMarkup(state).includes('data-message="m_forum"'));assert.ok(contextMenuModel(state,{kind:'message',id:'m_forum'}).items.some(item=>item.key==='open'));
+ const self=contextMenuModel(state,{kind:'self'});assert.equal(self.items.filter(item=>item.action==='set-status').length,4);
+ const target={kind:'artwork',purpose:'server',imageKind:'banner'},draft={id:state.servers[0].id,banner:'/files/banner'};assert.ok(contextMenuModel(state,target,{serverDraft:draft}).items.some(item=>item.key==='adjust'));
+ state.servers[0].role='member';state.servers[0].permissions={};assert.equal(contextMenuModel(state,target,{serverDraft:draft}),null);
+});
+test('context targeting preserves native text/link/media menus and ignores unrelated blank surfaces',async()=>{
+ const {resolveContextTarget}=await browserModule('context-menu.js');
+ for(const marker of ['input','textarea','select','a[href]','video','audio'])assert.equal(resolveContextTarget({closest:selector=>selector.includes(marker)?{}:null},'s_one'),null);
+ assert.equal(resolveContextTarget({closest:()=>null},'s_one'),null);
+ const node={dataset:{id:'c_target'}};const target=resolveContextTarget({closest:selector=>selector==='[data-action=conversation][data-id]'?node:null},'s_one');assert.equal(target.kind,'conversation');assert.equal(target.id,'c_target');
+ const edit={dataset:{purpose:'profile',kind:'avatar'}},surface={querySelector:()=>edit};
+ const artwork=resolveContextTarget({closest:selector=>selector==='.artwork-surface'?surface:null},'s_one');assert.equal(artwork.kind,'artwork');assert.equal(artwork.imageKind,'avatar');assert.equal(artwork.node,surface);
+});
+test('long-press context actions cancel during scrolling and suppress the following native click',async t=>{
+ const handlers=new Map(),opened=[],node={contains:target=>target===content},content={closest:()=>null};
+ globalValue(t,'document',{addEventListener:(type,handler)=>{if(!handlers.has(type))handlers.set(type,[]);handlers.get(type).push(handler);},querySelector:()=>null,getSelection:()=>({isCollapsed:true})});globalValue(t,'window',{innerWidth:390});t.mock.timers.enable({apis:['setTimeout']});
+ const {installGestures}=await browserModule('gestures.js');installGestures({enabled:()=>true,contextTarget:()=>({kind:'conversation',id:'c_touch',node}),contextOptions:target=>opened.push(target.id)});
+ const fire=(type,x,y)=>{let prevented=false;const event={target:content,pointerType:'touch',pointerId:1,isPrimary:true,clientX:x,clientY:y,preventDefault(){prevented=true;},stopImmediatePropagation(){}};for(const handler of handlers.get(type)||[])handler(event);return prevented;};
+ fire('pointerdown',100,200);fire('pointermove',102,240);t.mock.timers.tick(600);fire('pointerup',102,240);assert.equal(opened.length,0);
+ fire('pointerdown',100,200);t.mock.timers.tick(600);assert.deepEqual(opened,['c_touch']);assert.equal(fire('click',100,200),true);
+});
+
 test('latest indicator ignores small scrolls, clicks, loading and non-scrollable history',async()=>{
  const {showLatest,ChatScroll}=await browserModule('chat-scroll.js');
  const base={following:false,history:false,loading:false,distance:0,unread:0,scrollable:true};
@@ -294,4 +358,36 @@ test('failed avatar images use safe initials without changing other media or the
  assert.equal(ui.avatarImageFailed({matches:selector=>selector==='.avatar-art > img',parentElement:art}),true);assert.equal(art.textContent,'KG');
  art.dataset.avatarInitials='<safe>';ui.avatarImageFailed({matches:()=>true,parentElement:art});assert.equal(art.textContent,'<safe>');
  assert.equal(ui.avatarImageFailed({matches:()=>false,parentElement:art}),false);assert.equal(ui.avatarImageFailed(null),false);
+});
+
+test('voice controls keep camera and audio available while hiding unsupported screen broadcasting',async()=>{
+ const ui=await browserModule('ui.js'),call={muted:false,deafened:false,active:{conversationId:'native-voice'}};
+ const desktop=ui.voiceButtons(call,{type:'dm'},null,true);assert.ok(desktop.includes('data-action="toggle-screen"'));assert.ok(desktop.includes('data-action="toggle-video"'));
+ const mobile=ui.voiceButtons(call,{type:'dm'},null,false);assert.ok(!mobile.includes('data-action="toggle-screen"'));for(const action of ['mute','deafen','toggle-video','leave-voice'])assert.ok(mobile.includes(`data-action="${action}"`));
+ const state={user:{id:'u'},activeConv:'native-voice',activeServer:null,servers:[],dms:[{id:'native-voice',type:'dm'}],screenCaptureAvailable:false};assert.ok(!ui.voiceControlMarkup(state,call).includes('data-action="toggle-screen"'));
+});
+
+test('device menus render escaped hardware names and expose selected and unavailable choices',async()=>{
+ const {mediaMenuMarkup,mediaSettingsMarkup}=await browserModule('media-ui.js');
+ const model={preferences:{microphoneId:'usb-mic',cameraId:'missing'},captureSupported:true,outputSupported:true,devices:[{kind:'audioinput',deviceId:'usb-mic',label:'USB <microphone> "input"'}]};
+ const menu=mediaMenuMarkup('microphone',model);assert.match(menu,/USB &lt;microphone&gt; &quot;input&quot;/);assert.doesNotMatch(menu,/<microphone>/);assert.match(menu,/data-device="usb-mic" aria-pressed="true"/);
+ const settings=mediaSettingsMarkup(model,true);assert.match(settings,/Saved device · unavailable or access required/);assert.match(settings,/data-media-setting="cameraId"/);assert.match(settings,/data-media-setting="screenFps"/);
+ const unsupported=mediaSettingsMarkup({...model,outputSupported:false},false);assert.match(unsupported,/Change speakers in your device sound settings/);assert.match(unsupported,/cannot broadcast its own screen/);
+});
+
+test('media settings and selectors have no separate permission buttons',async()=>{
+ const {mediaMenuMarkup,mediaSettingsMarkup}=await browserModule('media-ui.js');
+ const model={captureSupported:true,outputSupported:true,outputPromptSupported:true,preferences:{}};
+ for(const markup of [mediaSettingsMarkup(model),mediaMenuMarkup('microphone',model),mediaMenuMarkup('camera',model)]){
+  assert.doesNotMatch(markup,/media-allow|Allow microphone access|Allow camera access/);
+ }
+ assert.match(mediaSettingsMarkup(model),/access is requested when you use/);
+});
+test('participant controls escape names, expose a usable slider and keep moderation and self actions conditional',async()=>{
+ const {participantMenuMarkup}=await browserModule('media-ui.js'),ui=await browserModule('ui.js'),state=fixture();
+ const user={id:'u_two',username:'two',displayName:'Two <script>'};state.users.push(user);
+ const menu=participantMenuMarkup(user,{volume:45,muted:false},{canAdjust:true,canModerate:false});
+ assert.match(menu,/Two &lt;script&gt;/);assert.doesNotMatch(menu,/<script>/);assert.match(menu,/max="200"/);assert.match(menu,/value="45"/);assert.match(menu,/Only you hear this change/);assert.doesNotMatch(menu,/data-action="moderate-member"/);
+ const self=participantMenuMarkup(state.user,{volume:100,muted:false},{self:true});assert.doesNotMatch(self,/participant-volume|block-user|open-dm/);
+ const tile=ui.voiceTileMarkup(state,{socketId:'peer',userId:'u_two',kind:'camera',camera:false});assert.match(tile,/data-user-id="u_two"/);assert.match(tile,/data-action="participant-menu"/);assert.match(tile,/tabindex="0"/);
 });

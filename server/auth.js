@@ -8,6 +8,14 @@ const deriveKey = promisify(scrypt);
 const PASSWORD_KEY_BYTES = 64;
 const SCRYPT_OPTIONS = { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
 const COOKIE_NAME = 'nexus_session';
+const LOGIN_INPUT_MAX_LENGTH = 128;
+
+function normalizeLoginUsername(value) {
+  if (typeof value !== 'string' || value.length > LOGIN_INPUT_MAX_LENGTH) return '';
+  const normalized = value.normalize('NFKC').replace(/[\u200B-\u200D\uFEFF]/g,'').trim().replace(/^@/,'').toLowerCase();
+  return /^[a-z0-9_.]{1,24}$/.test(normalized) ? normalized : '';
+}
+function validPasswordHash(value) { return typeof value === 'string' && /^[a-f0-9]{32}:[a-f0-9]{128}$/i.test(value); }
 
 function digest(value) { return createHash('sha256').update(value).digest('hex'); }
 function cookies(header = '') {
@@ -22,6 +30,7 @@ async function hashPassword(password) {
   return `${salt}:${key.toString('hex')}`;
 }
 async function checkPassword(password, stored) {
+  if (typeof password !== 'string' || !validPasswordHash(stored)) return false;
   const [salt, hash] = stored.split(':');
   const key = await deriveKey(password, salt, PASSWORD_KEY_BYTES, SCRYPT_OPTIONS);
   const expected = Buffer.from(hash, 'hex');
@@ -41,4 +50,4 @@ function createSession(db, res, userId, config) {
   res.cookie(COOKIE_NAME, token, { httpOnly: true, sameSite: 'strict', secure: config.secureCookies, maxAge, path: '/' });
 }
 
-module.exports = { COOKIE_NAME, hashPassword, checkPassword, findSession, createSession };
+module.exports = { COOKIE_NAME, normalizeLoginUsername, validPasswordHash, hashPassword, checkPassword, findSession, createSession };

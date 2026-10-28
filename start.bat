@@ -1,20 +1,25 @@
 @echo off
 setlocal
-rem Run from the project directory, including when opened through Explorer.
 cd /d "%~dp0"
 where node >nul 2>nul
 if errorlevel 1 (
-  echo Install Node.js 24.15 or newer in the Node 24 release line first.
-  pause
-  exit /b 1
+  echo [Nexus runtime] Node.js was not found on PATH. Install Node.js 26.x or Node 24.15+.
+  goto failed
 )
-if not exist node_modules\express\package.json (
+echo [Nexus] Installation: "%CD%"
+node scripts\require-node.js
+if errorlevel 1 goto failed
+node scripts\verify-release.js
+if errorlevel 1 goto failed
+node scripts\verify-release.js --dependencies
+if errorlevel 1 (
   call npm ci
-  if errorlevel 1 (
-    echo Dependency installation failed. Review the error above.
-    pause
-    exit /b 1
-  )
+  if errorlevel 1 goto failed
 )
-call npm start
+node --env-file-if-exists=.env server.js
+if errorlevel 1 goto failed
+exit /b 0
+:failed
+echo Nexus could not start. Read the error above.
 pause
+exit /b 1

@@ -1,21 +1,20 @@
-// Easy-to-tune capture, recovery and bandwidth limits. Hosting supplies ICE/TURN.
+import { MEDIA_CONFIG, normalizeMediaPreferences, microphoneConstraints, videoConstraints, videoEncoding } from './media-devices.js';
+
+// Easy-to-tune recovery limits. Per-device capture and quality live in media-devices.js.
 export const RTC_CONFIG = Object.freeze({
   ackTimeoutMs: 10000, connectionTimeoutMs: 25000, restartDelayMs: 4000, maxRestarts: 2,
-  cameraWidth: 1280, cameraHeight: 720, cameraFrameRate: 24,
-  screenWidth: 1920, screenHeight: 1080, screenFrameRate: 15,
-  cameraBitrate: 1500000, screenBitrate: 3000000, maxPendingSignals: 80,
+  maxPendingSignals: 80,
 });
-const AUDIO_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 const stopStream = stream => stream?.getTracks().forEach(track => { track.onended = null; track.stop(); });
 
 export class NexusCall {
   constructor({ getSocket, getConfig, onChange, onIncoming, onError, mediaDevices = globalThis.navigator?.mediaDevices,
-    peerFactory = config => new RTCPeerConnection(config), streamFactory = () => new MediaStream(), getMediaAllowed = () => true, getCanSpeak = () => true, getPeerAllowed = () => true, onAudioState = () => {} }) {
-    Object.assign(this, { getSocket, getConfig, onChange, onIncoming, onError, mediaDevices, peerFactory, streamFactory, getMediaAllowed, getCanSpeak, getPeerAllowed, onAudioState });
+    peerFactory = config => new RTCPeerConnection(config), streamFactory = () => new MediaStream(), getMediaAllowed = () => true, getCanSpeak = () => true, getPeerAllowed = () => true, onAudioState = () => {}, getMediaSettings = () => ({}) }) {
+    Object.assign(this, { getSocket, getConfig, onChange, onIncoming, onError, mediaDevices, peerFactory, streamFactory, getMediaAllowed, getCanSpeak, getPeerAllowed, onAudioState, getMediaSettings });
     this.active = null; this.peers = new Map(); this.pendingSignals = []; this.generation = 0;
     this.localStream = null; this.cameraStream = null; this.screenStream = null;
     this.preferredMuted = false; this.muted = false; this.deafened = false; this.video = false; this.sharing = false; this.joining = false;
-    this.connectionIssue = ''; this.cameraPending = false; this.screenPending = false; this.resumeAfterReconnect = null; this.stageListener = false;
+    this.connectionIssue = ''; this.cameraPending = false; this.screenPending = false; this.devicePending = false; this.resumeAfterReconnect = null; this.stageListener = false;
   }
   bind(socket) {
     socket.on('rtc:signal', signal => this.signal(signal).catch(error => this.onError(error.message)));
@@ -66,9 +65,10 @@ export class NexusCall {
     const generation = ++this.generation;
     this.joining = true; this.onChange();
     try {
-      const stream = canSpeak || video ? await this.mediaDevices.getUserMedia({ audio: canSpeak ? AUDIO_CONSTRAINTS : false, video: video ? this.cameraConstraints() : false }) : this.streamFactory();
+      const stream = canSpeak || video ? await this.mediaDevices.getUserMedia({ audio: canSpeak ? microphoneConstraints(this.getMediaSettings()) : false, video: video ? this.cameraConstraints() : false }) : this.streamFactory();
       if (generation !== this.generation) { stopStream(stream); return; }
       this.localStream = stream; this.video = video; this.stageListener = !canSpeak; this.connectionIssue = '';
+      this.watchInputTracks();
       this.applyAudioState(); // Disable captured audio before any peer can receive it.
       const result = await this.emit('voice:join', { conversationId, muted: this.muted, deafened: this.deafened });
       if (generation !== this.generation) return;
@@ -89,8 +89,11 @@ export class NexusCall {
       throw error;
     } finally { if (generation === this.generation) { this.joining = false; this.onChange(); } }
   }
-  cameraConstraints() {
-    return { width: { ideal: RTC_CONFIG.cameraWidth }, height: { ideal: RTC_CONFIG.cameraHeight }, frameRate: { ideal: RTC_CONFIG.cameraFrameRate, max: RTC_CONFIG.cameraFrameRate }, facingMode: 'user' };
+  cameraConstraints() { return videoConstraints('camera', this.getMediaSettings()); }
+  watchInputTracks() {
+    for (const track of [...(this.localStream?.getAudioTracks() || []), ...(this.currentCameraTrack() ? [this.currentCameraTrack()] : [])]) {
+      track.onended = () => { if (this.active) { this.onError(`${track.kind === 'audio' ? 'Microphone' : 'Camera'} disconnected. Choose a connected device from the call controls.`); this.onChange(); } };
+    }
   }
   currentCameraTrack() { return this.cameraStream?.getVideoTracks().find(track => track.readyState === 'live') || this.localStream?.getVideoTracks().find(track => track.readyState === 'live') || null; }
   currentScreenTrack() { return this.screenStream?.getVideoTracks().find(track => track.readyState === 'live') || null; }
@@ -158,10 +161,11 @@ export class NexusCall {
     console.error('[Nexus media]', { connection: peer.pc.connectionState, signaling: peer.pc.signalingState, candidates: peer.localCandidates, restarts: peer.restarts, message });
     peer.reportedIssue = true; this.connectionIssue = message; this.onError(message); this.onChange();
   }
-  async configureSenders(peer) {
-    for (const [sender, maxBitrate] of [[peer.cameraTransceiver.sender, RTC_CONFIG.cameraBitrate], [peer.screenTransceiver.sender, RTC_CONFIG.screenBitrate]]) {
+  async configureSenders(peer, preferences = this.getMediaSettings()) {
+    for (const [sender, encoding] of [[peer.audioTransceiver.sender, { maxBitrate: MEDIA_CONFIG.audioBitrate }], [peer.cameraTransceiver.sender, videoEncoding('camera', preferences)], [peer.screenTransceiver.sender, videoEncoding('screen', preferences)]]) {
       if (!sender.getParameters || !sender.setParameters) continue;
-      try { const parameters = sender.getParameters(); if (parameters.encodings?.length) { parameters.encodings[0].maxBitrate = maxBitrate; await sender.setParameters(parameters); } } catch { /* Some browsers do not support runtime encoding limits. */ }
+      try { const parameters = sender.getParameters(); if (parameters.encodings?.length) { for (const item of parameters.encodings) Object.assign(item, encoding); await sender.setParameters(parameters); } }
+      catch (error) { console.warn('[Nexus media] Browser could not apply an encoding preference.', { name: error.name }); }
     }
   }
   async makeOffer(peer, restart = false) {
@@ -252,6 +256,71 @@ export class NexusCall {
   }
   toggleDeafen() { this.setAudioState({ muted: this.preferredMuted, deafened: !this.deafened }); }
   syncAudio() { this.localStream?.getAudioTracks().forEach(track => { track.enabled = !this.muted && !this.deafened; }); }
+  async applyMediaPreferences(value, previousValue = this.getMediaSettings()) {
+    const next = normalizeMediaPreferences(value), previous = normalizeMediaPreferences(previousValue);
+    if (this.joining || this.cameraPending || this.screenPending || this.devicePending) throw new Error('Wait for the current capture request to finish.');
+    if (!this.active) return;
+    const generation = this.generation, oldMicrophone = this.localStream?.getAudioTracks()[0], oldCamera = this.currentCameraTrack(), screen = this.currentScreenTrack();
+    const microphoneChanged = oldMicrophone?.readyState === 'ended' || ['microphoneId', 'echoCancellation', 'noiseSuppression', 'autoGainControl'].some(key => next[key] !== previous[key]);
+    const cameraChanged = next.cameraId !== previous.cameraId || this.video && !oldCamera;
+    const qualityChanged = kind => ['Resolution', 'Fps'].some(key => next[kind + key] !== previous[kind + key]);
+    let microphoneStream, cameraStream; const replacements = [], constrained = [];
+    this.devicePending = true; this.onChange();
+    const stillActive = () => generation === this.generation && Boolean(this.active);
+    try {
+      if (microphoneChanged && !this.stageListener && this.getCanSpeak(this.active.conversationId)) {
+        microphoneStream = await this.mediaDevices.getUserMedia({ audio: microphoneConstraints(next), video: false });
+        if (!stillActive()) return;
+        const track = microphoneStream.getAudioTracks()[0];
+        if (!track) throw new Error('The selected microphone did not provide an audio track.');
+        track.enabled = !this.muted && !this.deafened;
+      }
+      if (cameraChanged && this.video && this.getMediaAllowed(this.active.conversationId, 'camera')) {
+        cameraStream = await this.mediaDevices.getUserMedia({ video: videoConstraints('camera', next), audio: false });
+        if (!stillActive()) return;
+        const track = cameraStream.getVideoTracks()[0];
+        if (!track) throw new Error('The selected camera did not provide a video track.');
+      }
+      for (const [kind, track] of [['camera', cameraChanged ? null : oldCamera], ['screen', screen]]) {
+        if (track && qualityChanged(kind)) {
+          const rollback = track.getConstraints?.() || videoConstraints(kind, previous, false);
+          constrained.push({ track, rollback });
+          await track.applyConstraints(videoConstraints(kind, next, false));
+          if (!stillActive()) return;
+        }
+      }
+      for (const peer of this.peers.values()) {
+        if (microphoneStream) replacements.push({ sender: peer.audioTransceiver.sender, next: microphoneStream.getAudioTracks()[0], previous: oldMicrophone || null });
+        if (cameraStream) replacements.push({ sender: peer.cameraTransceiver.sender, next: cameraStream.getVideoTracks()[0], previous: oldCamera });
+      }
+      // Wait for every sender before releasing the old hardware; partial failures roll back.
+      const results = await Promise.allSettled(replacements.map(item => item.sender.replaceTrack(item.next)));
+      if (!stillActive()) return;
+      const failed = results.find(result => result.status === 'rejected'); if (failed) throw failed.reason;
+      if (cameraStream) for (const peer of this.peers.values()) peer.cameraTransceiver.sender.setStreams?.(cameraStream);
+      if (microphoneStream) {
+        if (oldMicrophone) { oldMicrophone.onended = null; this.localStream.removeTrack(oldMicrophone); oldMicrophone.stop(); }
+        this.localStream.addTrack(microphoneStream.getAudioTracks()[0]); microphoneStream = null;
+      }
+      if (cameraStream) {
+        stopStream(this.cameraStream);
+        for (const track of this.localStream.getVideoTracks()) { track.onended = null; this.localStream.removeTrack(track); track.stop(); }
+        this.cameraStream = cameraStream; cameraStream = null;
+      }
+      if (screen) screen.contentHint = next.screenFps > 30 ? 'motion' : 'detail';
+      this.watchInputTracks(); this.onChange();
+      await Promise.all([...this.peers.values()].map(peer => this.configureSenders(peer, next)));
+    } catch (error) {
+      if (stillActive()) {
+        await Promise.allSettled(replacements.map(item => item.sender.replaceTrack(item.previous)));
+        await Promise.allSettled(constrained.map(({ track, rollback }) => track.applyConstraints(rollback)));
+      }
+      throw error;
+    } finally {
+      stopStream(microphoneStream); stopStream(cameraStream);
+      if (generation === this.generation) { this.devicePending = false; this.onChange(); }
+    }
+  }
   async replaceVideo() {
     await Promise.all([...this.peers.values()].flatMap(peer => [peer.cameraTransceiver.sender.replaceTrack(this.currentCameraTrack()), peer.screenTransceiver.sender.replaceTrack(this.currentScreenTrack())]));
     for (const peer of this.peers.values()) {
@@ -262,7 +331,7 @@ export class NexusCall {
     await this.update();
   }
   async toggleVideo() {
-    if (!this.active || this.cameraPending) return;
+    if (!this.active || this.cameraPending || this.devicePending) return;
     if (!this.getMediaAllowed(this.active.conversationId,'camera')) throw new Error('Camera and screen sharing are disabled in this channel.');
     const generation = this.generation;
     this.cameraPending = true; this.onChange();
@@ -274,6 +343,7 @@ export class NexusCall {
         const stream = await this.mediaDevices.getUserMedia({ video: this.cameraConstraints(), audio: false });
         if (generation !== this.generation) { stopStream(stream); return; }
         this.cameraStream = stream; this.video = true;
+        this.watchInputTracks();
       }
       await this.replaceVideo();
     } catch (error) {
@@ -284,18 +354,18 @@ export class NexusCall {
     } finally { this.cameraPending = false; this.onChange(); }
   }
   async toggleScreen() {
-    if (!this.active || this.screenPending) return;
+    if (!this.active || this.screenPending || this.devicePending) return;
     if (!this.getMediaAllowed(this.active.conversationId,'screen')) throw new Error('Camera and screen sharing are disabled in this channel.');
     this.screenPending = true; this.onChange();
     const generation = this.generation;
     try {
       if (this.sharing) { await this.stopScreen(); return; }
       if (!this.mediaDevices?.getDisplayMedia) throw new Error('This browser cannot share its screen. You can still watch other people’s shared screens.');
-      const stream = await this.mediaDevices.getDisplayMedia({ video: { width: { ideal: RTC_CONFIG.screenWidth }, height: { ideal: RTC_CONFIG.screenHeight }, frameRate: { ideal: RTC_CONFIG.screenFrameRate, max: RTC_CONFIG.screenFrameRate } }, audio: false });
+      const stream = await this.mediaDevices.getDisplayMedia({ video: videoConstraints('screen', this.getMediaSettings()), audio: false });
       if (generation !== this.generation) { stopStream(stream); return; }
       this.screenStream = stream; this.sharing = true;
       const track = stream.getVideoTracks()[0];
-      if (track) { track.contentHint = 'detail'; track.onended = () => this.stopScreen().catch(error => this.onError(error.message)); }
+      if (track) { track.contentHint = normalizeMediaPreferences(this.getMediaSettings()).screenFps > 30 ? 'motion' : 'detail'; track.onended = () => this.stopScreen().catch(error => this.onError(error.message)); }
       await this.replaceVideo();
     } catch (error) {
       stopStream(this.screenStream); this.screenStream = null; this.sharing = false;
@@ -316,6 +386,6 @@ export class NexusCall {
     for (const stream of [this.localStream, this.cameraStream, this.screenStream]) stopStream(stream);
     this.active = null; this.localStream = null; this.cameraStream = null; this.screenStream = null;
     this.resumeAfterReconnect = null; this.stageListener = false;
-    this.applyAudioState(); this.video = false; this.sharing = false; this.joining = false; this.connectionIssue = ''; this.cameraPending = false; this.screenPending = false; this.onChange();
+    this.applyAudioState(); this.video = false; this.sharing = false; this.joining = false; this.connectionIssue = ''; this.cameraPending = false; this.screenPending = false; this.devicePending = false; this.onChange();
   }
 }

@@ -8,6 +8,20 @@ const os = require('node:os');
 const path = require('node:path');
 const { openDatabase } = require('../server/database');
 
+test('schema ten recovery addresses, code hashes and outstanding proofs survive the additive host-recovery migration',t=>{
+ const directory=fs.mkdtempSync(path.join(os.tmpdir(),'nexus-v10-recovery-')),filename=path.join(directory,'nexus.sqlite');t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+ const initial=openDatabase(filename),created='2026-10-01T00:00:00.000Z';
+ initial.prepare('INSERT INTO users (id,username,displayName,passwordHash,createdAt) VALUES (?,?,?,?,?)').run('u_recovery_keep','recovery_keep','Retained recovery','existing-hash-fixture',created);
+ initial.prepare('INSERT INTO account_security VALUES (?,?,?,?,?,?)').run('u_recovery_keep','verified@example.test',1000,'pending@example.test',2000,3000);
+ initial.prepare('INSERT INTO account_tokens VALUES (?,?,?,?,?,?)').run('a'.repeat(64),'u_recovery_keep','reset','verified@example.test',2000,9999999999999);
+ initial.prepare('INSERT INTO recovery_codes VALUES (?,?,?)').run('b'.repeat(64),'u_recovery_keep',2000);
+ const before={security:initial.prepare('SELECT * FROM account_security').all(),tokens:initial.prepare('SELECT * FROM account_tokens').all(),codes:initial.prepare('SELECT * FROM recovery_codes').all()};
+ initial.exec('DROP TABLE support_recovery_tokens; PRAGMA user_version=10');initial.close();
+ const upgraded=openDatabase(filename);
+ try{assert.equal(upgraded.prepare('PRAGMA user_version').get().user_version,11);assert.deepEqual(upgraded.prepare('SELECT * FROM account_security').all(),before.security);assert.deepEqual(upgraded.prepare('SELECT * FROM account_tokens').all(),before.tokens);assert.deepEqual(upgraded.prepare('SELECT * FROM recovery_codes').all(),before.codes);assert.equal(upgraded.prepare('SELECT COUNT(*) AS count FROM support_recovery_tokens').get().count,0);assert.equal(upgraded.prepare('SELECT passwordHash FROM users WHERE id=?').get('u_recovery_keep').passwordHash,'existing-hash-fixture');}
+ finally{upgraded.close();}
+});
+
 // Version-one columns match the previous release. Every record is disposable.
 const LEGACY_SCHEMA = `
   PRAGMA user_version = 1;
@@ -45,7 +59,7 @@ test('upgrading a version-one database preserves accounts, servers, invitations 
   assert.equal(server.name, 'Existing server'); assert.equal(server.invite, 'existing-invitation'); assert.equal(server.banner, '');
   const file = db.prepare('SELECT * FROM files').get();
   assert.equal(file.name, 'existing.gif'); assert.equal(file.purpose, 'profile'); assert.equal(file.serverId, null);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 9); db.close();
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 11); db.close();
   const reopened = openDatabase(filename);
   assert.equal(reopened.prepare('SELECT count(*) AS count FROM users').get().count, 1);
   assert.equal(reopened.prepare('SELECT count(*) AS count FROM files').get().count, 1); reopened.close();
@@ -72,7 +86,7 @@ test('version-five permission migration preserves role grants once and keeps lat
   `);
   fixture.close();
   const upgraded = openDatabase(filename);
-  assert.equal(upgraded.prepare('PRAGMA user_version').get().user_version, 9);
+  assert.equal(upgraded.prepare('PRAGMA user_version').get().user_version, 11);
   assert.equal(upgraded.prepare('SELECT text FROM messages').get().text, 'Keep this history');
   const role = upgraded.prepare('SELECT * FROM server_roles').get();
   assert.deepEqual(JSON.parse(role.permissions), ['inviteMembers','manageMessages','manageInvites']);
@@ -101,7 +115,7 @@ test('version-six upgrade keeps pins, roles and messages while adding account pr
     DROP TABLE user_preferences; DROP TABLE pin_counters; DROP TABLE pin_reads;
     PRAGMA user_version=6;
   `);fixture.close();
-  const upgraded=openDatabase(filename);assert.equal(upgraded.prepare('PRAGMA user_version').get().user_version,9);
+  const upgraded=openDatabase(filename);assert.equal(upgraded.prepare('PRAGMA user_version').get().user_version,11);
   const message=upgraded.prepare('SELECT * FROM messages').get();assert.equal(message.text,'Keep this pinned message');assert.equal(message.pinned,1);assert.equal(message.pinRevision,0);
   upgraded.prepare('INSERT INTO user_preferences VALUES (?,?,?,?)').run('u_previous','{"palette":"rose","motion":false}',1,'2026-10-26');
   upgraded.prepare('INSERT INTO pin_counters VALUES (?,?)').run('d_previous',2);upgraded.prepare('INSERT INTO pin_reads VALUES (?,?,?)').run('d_previous','u_previous',1);upgraded.close();
@@ -127,7 +141,7 @@ test('version-seven type simplification preserves forum roots, replies, pins, fi
  ALTER TABLE channels DROP COLUMN coverCrop;
  ALTER TABLE server_roles DROP COLUMN iconCrop;ALTER TABLE server_roles DROP COLUMN position;ALTER TABLE server_roles DROP COLUMN displayMembers;
  PRAGMA user_version=7;`);fixture.close();
- const upgraded=openDatabase(filename);assert.equal(upgraded.prepare('PRAGMA user_version').get().user_version,9);assert.equal(upgraded.prepare('SELECT type FROM channels WHERE id=?').get('c_qa').type,'forum');assert.equal(upgraded.prepare('SELECT type FROM channels WHERE id=?').get('c_resources').type,'media');
+ const upgraded=openDatabase(filename);assert.equal(upgraded.prepare('PRAGMA user_version').get().user_version,11);assert.equal(upgraded.prepare('SELECT type FROM channels WHERE id=?').get('c_qa').type,'forum');assert.equal(upgraded.prepare('SELECT type FROM channels WHERE id=?').get('c_resources').type,'media');
  const topic=upgraded.prepare('SELECT * FROM messages WHERE id=?').get('m_root');assert.equal(topic.pinned,1);assert.equal(topic.pinRevision,3);assert.equal(topic.acceptedReplyId,'m_reply');assert.equal(upgraded.prepare('SELECT threadId FROM messages WHERE id=?').get('m_reply').threadId,'m_root');assert.equal(upgraded.prepare('SELECT diskName FROM files').get().diskName,'keep-disk-file');assert.equal(upgraded.prepare('SELECT cover FROM channels WHERE id=?').get('c_qa').cover,'/files/f_cover');assert.equal(JSON.parse(upgraded.prepare('SELECT attachments FROM messages WHERE id=?').get('m_doc').attachments)[0].spoiler,true);
  assert.deepEqual(upgraded.prepare('SELECT name FROM server_roles ORDER BY position').all().map(role=>role.name),['Alpha','Zebra']);
  upgraded.exec(`UPDATE server_roles SET position=10,displayMembers=1 WHERE id='r_a';UPDATE users SET avatarCrop='{"x":20,"y":80,"zoom":2}';`);upgraded.close();

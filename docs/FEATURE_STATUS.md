@@ -1,118 +1,28 @@
-# Request coverage — Nexus 2.17
+# Request coverage · Nexus 2.23.0
 
-Date: 2026-10-27
+| Area | Current behavior |
+| --- | --- |
+| Identity | Sign-in first; optional @ username; exact passwords; registration; immutable username; editable display name; account deletion; creator ID binding |
+| Account recovery | Current-password enrollment; private pending/verified email; saved codes; host-only assisted links; single-use resets and session revocation |
+| Profiles | Positioned avatar/banner uploads; GIF support; bio/pronouns; account badges; server roles; presence rings |
+| Messages | DMs/server chat; Markdown; replies/grouping; typing names; unread markers; mentions; sounds; search; pins |
+| Files | Up to 5 GiB; resumable chunks; previews; clipboard images; spoilers; galleries and in-app viewing |
+| Servers | Join/leave/discovery; official community ID; artwork; rules; invites; deletion and ownership handling |
+| Channels | Text, announcement, forum, media, voice and stage; categories, ordering, icons and permissions |
+| Roles | Ordered roles; grants/denials; member grouping; separate role presentation in profiles |
+| Moderation | Kick/ban; timed/permanent restrictions; mute countdown; voice/stage disconnection; blocking |
+| Calls | Independent camera/screen tracks; stage restrictions; mute/deafen; speaking indicators; incoming calls |
+| Devices | Automatic input permission requests through use; attached input/output/camera selectors; screen-quality menu; Voice & video settings; local account preferences |
+| Quality | 480p–4K; 15/24/30/60 FPS; automatic high-quality budgets and manual ceilings through 40 Mbps |
+| Listening audio | Per-person 0–200% gain; local mute/reset; account/device storage; member/message context actions |
+| Context menus | Server/channel/category/DM/member/message/forum/file/artwork actions; keyboard and touch; permissions and confirmations |
+| Layout | Resizable panels; one-row local profile; balanced call controls; scrollable settings; themed menus; gestures |
+| Preferences | Sixteen dark palettes; account-synced appearance/sounds/motion; local hardware and layout |
+| Updates | Manual ZIP replacement; source checks; startup diagnostics; page version; server-build refresh |
+| Community recovery | Explicit setup-community.bat and original editable Skypixel Framework bundle |
 
-This record maps the latest follow-up and the earlier 19-item request list to delivered behavior and actual evidence. Browser size checks and synthetic touch fixtures do not certify every physical device or operating-system keyboard. See VALIDATION.md for the distinction and deployment boundaries.
+This package targets the website and its persistent Node/SQLite service. Browser API support determines capture/output availability. Real throughput needs HTTPS/TURN and physical-device checks. Native applications, app stores, background call services and an SFU are outside this package. See [validation](VALIDATION.md) and [voice deployment](VOICE_DEPLOYMENT.md).
 
-## Latest people-search follow-up in 2.17
+Email recovery needs a configured SMTP sender and a previously verified address. Codes need to be generated and saved before losing access. See [account recovery](ACCOUNT_RECOVERY.md).
 
-People search accepts username and @username, including trimmed whitespace and case differences. Current assigned profile pictures and banners can load for signed-in, unblocked search viewers before a DM/shared server exists. Unused/replaced profile uploads are owner-only, and other private file permissions retain their existing checks. Failed avatar images use safe initials while preserving the presence wrapper. New message and quick search use the same people-query behavior; message/discovery searches retain their literal queries. See [CHANGES_2.17.md](CHANGES_2.17.md) and [VALIDATION.md](VALIDATION.md).
-
-## Retained mute-layout follow-up in 2.16.1
-
-The shared server mute warning has bounded flex widths and wrapping text, including long unbroken reasons and multi-unit durations. Voice/stage warnings use the bottom footer space and retain phone safe-area padding. Long details have an internal scroller with keyboard focus. Voice controls refresh on moderation/policy updates through the existing stable media view, so applying or lifting a mute updates the warning without replacing media tiles. See [CHANGES_2.16.1.md](CHANGES_2.16.1.md) and [VALIDATION.md](VALIDATION.md).
-
-## Retained navigation follow-up in 2.16
-
-Each server remembers its own last selected channel by ID. Returning from Messages, another server or a reload restores it instead of always selecting general. All six channel types are supported. The existing per-account, per-tab navigation snapshot also stores this history. Current workspace access filters remove deleted, hidden and inaccessible entries. First visits retain the existing general/first-channel fallback, and returning to a voice/stage page uses the existing non-joining restore path. See [CHANGES_2.16.md](CHANGES_2.16.md) and [VALIDATION.md](VALIDATION.md).
-
-## Retained screenshot follow-up in 2.15.1
-
-Reproduced the latest phone failure by pairing the 2.15 viewer module with 2.14 application/styles: two close buttons, a 21-pixel title area and a full-size clipped image. The server now snapshots client JS/CSS at startup and serves them under a shared content-derived build path. HTML is not stored, old entry URLs redirect without caching, and relative module imports retain the same build prefix. A browser already primed with the broken combination recovered after a normal reload against the upgraded server. See [CHANGES_2.15.1.md](CHANGES_2.15.1.md) and [VALIDATION.md](VALIDATION.md).
-
-## Retained screenshot follow-up in 2.15
-
-The shared media viewer centers contained images, video and audio in both axes. Zoom out, Fit, Zoom in and Close have equal 44-pixel boxes. Mobile filenames and Close share the first row; zoom and the named download icon share the next. The close action stays in normal layout flow. Fit media responds directly through CSS during resizing; enlarged images retain scrollable zoom, while Fit clears the old scroll offset. Video controls stay within the stage. Playback pauses and the stage observer disconnects when leaving the viewer. See [CHANGES_2.15.md](CHANGES_2.15.md) and [VALIDATION.md](VALIDATION.md).
-
-## Retained screenshot follow-up in 2.14
-
-The Discovery title, Search and Create server now share one row, including narrow phone widths. An obsolete mobile grid rule was removed, and generic narrow conversation rules exclude Discovery. Profile badge groups are non-wrapping, with matching width/height/flex basis and consistent gaps. Display names can wrap inside their own remaining space. Public profiles, the DM profile sidebar and account preview share the fix. See [CHANGES_2.14.md](CHANGES_2.14.md) and [VALIDATION.md](VALIDATION.md).
-
-## Retained screenshot follow-up in 2.13
-
-Microphone/deafen taps play their own soft confirmation before or during calls; DND, the Sounds preference and zero volume still silence them. Floating notices keep one viewport anchor during chat/settings scrolling, with compact fallback width retained across observer callbacks. Eight additional dark palettes are available and accepted by account sync, for sixteen total. Shared tooltips cover status avatars and existing native descriptions, with live status text and keyboard access on standalone profile avatars. See [CHANGES_2.13.md](CHANGES_2.13.md) and [VALIDATION.md](VALIDATION.md).
-
-## Retained screenshot follow-up in 2.12
-
-Member names no longer repeat roles underneath; grouping and full profile roles remain. Message body line height and author separation have slightly more space. Discovery has its own name/description search with additional pages, independently of quick search. Early member awards stop at a fixed launch deadline and persist afterward. Community owner derives only from current ownership, with live transfer/deletion updates. Shared quick tooltips describe badges and named icon controls. Microphone/deafen work before joining and retain device/account choices through calls and reconnects. DMs start with a voice Call action; camera remains available inside the call. Attachment-only DM previews describe files both live and after refresh. See [CHANGES_2.12.md](CHANGES_2.12.md), [BADGES.md](BADGES.md) and [VALIDATION.md](VALIDATION.md).
-
-## Retained screenshot follow-up in 2.11
-
-Settings action rows keep deletion beside the normal actions and retain warnings in confirmation dialogs. Server/account tabs are individual buttons without long underlines or redundant subtitles/sync-status text. Narrow composers use a one-line placeholder. Editable avatar/banner previews own their controls, with hover, keyboard and touch access. Activity shows readable actions, actor/target names and specific field changes. Personal Skypixel data is applied through an explicit local import; startup/registration stay generic. The personal upgrade retains five custom roles and transfers Best Tester members to Tester. See [CHANGES_2.11.md](CHANGES_2.11.md) and [COMMUNITY_SETUP.md](COMMUNITY_SETUP.md).
-
-## Latest screenshot follow-up in 2.10
-
-Centered empty states; one discovery Create and one sidebar Join action; separate unsaved confirmations; a scrolling Markdown rulebook with section navigation; one ID-bound official community; data-driven Skypixel setup with original supplied artwork; owner-only server deletion; stable revealed spoilers through reactions; one-row compact headers; centered mobile call controls/dock; hide-versus-decline call behavior; no duplicate pins browser in message actions; untimed kick/disconnect; voice/stage removal permission; live mute countdowns and join restrictions; detailed ban rejection; permanent self-deletion. See [CHANGES_2.10.md](CHANGES_2.10.md), [COMMUNITY_SETUP.md](COMMUNITY_SETUP.md) and [VALIDATION.md](VALIDATION.md).
-
-## Follow-up refinements in 2.9
-
-GIF rows/pagination, uppercase categories, a bounded video viewer, red floating reconnection notices, tighter text/mention spacing and one-row mobile chat headers address the seven screenshots. Voice negotiation adopts offered m-lines on the answerer, and local audio analysis provides speaking feedback. Settings > Account identifies the permanent account and creator status. Native remote-frame delivery did not pass in this QA environment; see CHANGES_2.9.md, CREATOR_SETUP.md and VOICE_DEPLOYMENT.md.
-
-## Follow-up refinements in 2.8.2
-
-Message groups use equal internal spacing for text and emoji, and the DM profile action is separated from the join date. Server unread activity appears in the global Servers indicator, joined-server totals and channel badges. Official-server markers remain visible. See CHANGES_2.8.2.md and VALIDATION.md.
-
-## Follow-up refinements in 2.8.1
-
-Profile and server artwork actions are grouped by image, with responsive Upload/Adjust/Remove rows. The typing label displays complete names in its own live region on desktop and mobile, independently of character counts and shortcut hints. See CHANGES_2.8.1.md and VALIDATION.md.
-
-| # | Request | Delivered behavior and verification |
-| --- | --- | --- |
-| 1 | False Jump to latest on tiny scroll/channel entry | Clicks preserve live-follow; a meaningful distance/unread condition controls the indicator. Loading/short history stays clear, and Forum/Media boards have no chat jump control. Unit cases and real channel/viewport checks passed. |
-| 2 | Remove Q&A and Resources | Both are removed from UI/API creation and conversion. Schema 8 converts existing Q&A to Forum and Resources to Media once, retaining IDs, names, permissions, history, threads, covers, files and pins. Migration/restart tests passed. |
-| 3 | Floating notices without UI movement | Notices reserve zero layout height and prefer free gaps between measured controls. Before/after workspace/navigation/dialog geometry stayed identical. A saved-role notice no longer blocked the member-role checkbox; swipe/close work. |
-| 4 | Manual image crop/position | Upload and existing-image editors for avatars, banners, server icons, role icons, forum covers and attachment image previews. Drag/position/zoom/reset/apply persist metadata without rewriting originals or flattening GIFs. Real native upload, drag and saved-position checks plus file-byte tests passed. |
-| 5 | Small-device controls too low/crowded | CSS viewport sizing handles orientation; overlay keyboard sizing applies only while editing. Safe-area spacing and responsive header controls keep Send inside all eight tested viewports, including 320x480 and landscape. |
-| 6 | More touch gestures, especially reply | Right swipe replies; left swipe/long press opens message actions. Drawers, sheet handles, notices and unzoomed image navigation retain gestures. Unit timers and production-handler fixtures passed; all retain button alternatives. |
-| 7 | Better server rules and project-wide formatting | Larger styled rules dialog and shared safe Markdown for prose: messages, captions, bios, descriptions and welcome text. Headings/bold/lists/emoji shortcodes rendered in the actual rules view; injection/code/link tests passed. Identity labels remain plain text. |
-| 8 | Visual channel icon selection | A 20-choice SVG grid replaces text-only icon dropdowns, with selection state, accessible names and tooltips. The role editor uses it too and preserves custom image icons. Native UI selection/save passed. |
-| 9 | Old-looking dropdown menus | Themed portal menus preserve underlying form values and provide arrows, Home/End, type-ahead and Escape. Actual channel/role menus were checked; Escape leaves the settings dialog open. |
-| 10 | Profile hierarchy | Display name/badges, @username · pronouns, bio, server roles, Here since. The role header does not repeat the server name; DM profiles omit server roles. Rendering/order tests passed. |
-| 11 | Forum grid/list | Independent account-synced layout buttons, separate from Media layout. Real list switching and grid/list rendering checks passed. |
-| 12 | Forum publishing with media, then chat | New post opens a publishing form with title/body and optional attachments. A real GIF spoiler post was created, opened and replied to in its own chat. Root/reply authorization tests passed. |
-| 13 | Documents and spoilers in Media | File chooser/API/gallery accept documents alongside images/video/audio. Every attachment can be a spoiler. A real document was uploaded, published, revealed and shown with download controls; flags/reset behavior and invalid-file cases are tested. |
-| 14 | Preview X outside the card | Preview buttons own a fixed action column. Actual image/document cards measured 264 pixels, with no overflow and every action fully inside their bounds. |
-| 15 | Oversized image hover outline | Message image buttons fit their image instead of filling the message row; cropped previews use the same bounded frame. Hover uses a thin frame without changing layout. |
-| 16 | Small emoji and reactions | Active-category emoji cells use 28-pixel glyphs/44-pixel height; actual Faces count remains bounded at 118. Reactions use 22-pixel glyphs in 36-pixel controls, and emoji-only messages are larger. Real picker/reaction measurements passed. |
-| 17 | Continuous presence outline | Online/idle/DND/offline use a continuous 3.5-pixel colored outline with accessible status labels; DND/idle behavior is unchanged. |
-| 18 | Role-based ordered member groups | Separate-display flags and owner-controlled display order. Each online member appears once under their first enabled role; remaining online users use Online and every offline user uses Offline. Actual creation, assignment, reorder and online-to-offline grouping passed, plus permission/persistence/unit cases. Order is visual, not a permission hierarchy. |
-| 19 | Join consecutive mention highlights | Adjacent recent mentioned messages share their middle corners and retain one continuous background edge. Unit cases and real @here messages showed first-bottom/next-top radii of zero. |
-
-## Earlier requests retained
-
-| Area | Included behavior | Evidence / dependency |
-| --- | --- | --- |
-| Real accounts, sign-in first | Server-backed registration/session, no demo users; sign-in is the initial unauthenticated view | Authentication/persistence/proxy tests; prior browser QA |
-| Original identity/readability | Original Nexus layout/assets, bundled readable Inter font, simplified Messages/Servers navigation | Existing branding/font notices preserved; no legal trademark clearance implied |
-| Display name and immutable username | Username identifies contacts and cannot be changed; display name stays visual | Identity/impersonation tests |
-| Creator and official server | Creator badge bound to account ID; creator-owned public Skypixel Framework server ranks first | Tests; fresh installation requires the private creator claim configuration |
-| Profiles/server artwork | GIF avatars/banners/icons, full-frame images, fade/reduced-motion behavior, larger responsive profiles/settings | Upload/auth tests and retained browser QA |
-| Upload size | 5 GiB per attachment/profile/server image; four message attachments; resumable chunks and progress/cancel | Sparse full-size boundary/range tests; no five-gigabyte network benchmark |
-| Composer attachments | Clipboard image upload, previews, attachment spoilers, manual image positioning and native file selection | Retained paste fixture + real native uploads in 2.8 |
-| Messages navigation | Start conversation switches to DM sidebar; last DM restored after section changes; empty on initial entry | Retained browser checks; current real DM flow |
-| History/readability | Grouping, typing indicator, manual-history pause, new-message button, bounded pagination and 8,000-character validation | Unit/integration tests; old-pin and latest browser checks |
-| Emoji/GIF | Bounded active emoji category, seven categories, searchable provider picker | Emoji browser/layout tests; live GIPHY needs operator key/quota |
-| Server administration | Rules, invites, listing, channels, categories, roles, members, moderation and activity in server dropdown/settings | Actual HTTP/Socket.IO tests; no duplicate channel-create button |
-| Categories/channel editing | Rename/reorder/collapse categories, reorder/move channels including uncategorized, custom channel icons and deletion | API tests and retained browser workflows |
-| Channel types | Text, announcements, forum, media/files, voice and stage | Content/permission tests; Q&A/Resources migrate to Forum/Media without erasing history |
-| Permissions | 26 capabilities, ordered member display, basic defaults, role Allow/Deny/Inherit, private channel visibility, independent voice capture | Route/live-revocation/delegation tests; future per-channel action overrides remain roadmap work |
-| Moderation and membership | Kick, timed/permanent ban, temporary mute, server leave and ownership transfer | Integration tests |
-| Blocking | Persistent account block hides accessible DM/server text, members, pins/reactions and peer media; unblock list | HTTP/live media/signaling tests; stored messages are preserved |
-| Whole DM deletion | Explicit confirmed deletion removes conversation/history/files for both sides | Integration tests; permanent action remains explicit in UI |
-| Discovery | Real opt-in public servers, joined servers sidebar, creator official ordering | Listing/access/ordering tests |
-| Voice layout | Visible participant avatars/names, click to join, optional members panel, independent camera/screen, large presentation/fullscreen views | Browser layout and deterministic RTC tests; remote real-device media boundary below |
-| Presence/sounds | DND silence, automatic idle with DND/offline exceptions, original soft fading local sounds, volume settings and mention cue | Presence/audio tests; browser audio requires a user gesture |
-| Reconnection | Socket reconnect, fresh bootstrap/access checks, bounded media recovery, upload offset recovery and preference retry | HTTP/client/RTC tests; network conditions still affect availability |
-| Image behavior | In-app viewer, bounded zoom, media grid/list, application image download only in DM/Media | Native viewer/download QA and route policy tests |
-| Simplified controls | Inert logo, one personal settings entry, server name dropdown and hover/focus channel gears | Retained browser checks; touchscreen path retained |
-| Responsive panels | Left/right resize limits, keyboard control, device-local widths and phone drawers | Boundary unit tests plus pointer/keyboard and six-size browser checks |
-| Errors and abuse controls | Console diagnostics without message bodies/secrets, visible error notices, message/upload/socket limits and slowmode | Integration tests and error-path observations; limits are process-local |
-| Full project ZIP | Complete source, lockfile/startup files, original legacy files and proprietary license | ZIP integrity and byte-preservation checks; no QA/runtime/private environment bundled |
-
-## Boundaries that cannot honestly be marked complete
-
-- A browser necessarily receives the web client and visible media. DevTools, screenshots or copying received bytes cannot be prevented. Server-only code, private configuration, databases and unauthorized files remain outside the public directory and behind access checks. Spoilers and download buttons are not DRM.
-- Live GIPHY search requires the host's provider key and quota. Missing-key/failure handling, bounded search and validated references are implemented/tested; a live production-provider search was not certified here.
-- Camera/screen/audio code is implemented, but decoded remote frames across two physical devices and networks were not verified in this environment. Deploy HTTPS, provision a working TURN relay and finish the deployment checks. The archive does not create a relay. Voice remains an eight-person mesh; larger rooms need an SFU.
-- Native keyboard, rotation and gestures require testing on the actual supported phones/tablets. Six browser viewport sizes and synthetic touch events do not certify every device.
-- Public-launch capacity, security audit, per-account storage quotas, content scanning, account recovery and end-to-end encryption remain the explicit ROADMAP.md work. No claim of 100% universal performance, complete anti-spam protection or future-proof infrastructure is made.
+A private host recovery tool handles independently verified owners who have lost both recovery methods. A saved but unverified address cannot reset a password. See [context menus](CONTEXT_MENUS.md) and [account recovery](ACCOUNT_RECOVERY.md).

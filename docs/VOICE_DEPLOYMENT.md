@@ -2,6 +2,26 @@
 
 The application implements authenticated WebRTC signaling, separate microphone/camera/screen tracks with offered-m-line adoption on the answering peer, offer-collision handling, queued early ICE, bounded connection recovery persistent media elements, explicit camera/screen MID metadata and later renegotiation handling. A joined room is distinct from an established media connection.
 
+## Device selection and streaming quality
+
+Use the attached arrows on microphone, deafen, camera and screen controls, or open Settings → Voice & video. Opening an input chooser or selecting an input requests browser access automatically when device names are not available. There is no separate Allow button; the browser/operating system still requires the user's consent. Temporary discovery tracks are stopped after enumeration. Selecting an input uses its exact device ID; an unavailable device produces a useful error instead of silently choosing a different microphone or camera. Current and future peer audio uses the selected speaker when setSinkId is supported. Browser permission may be required through selectAudioOutput. Otherwise Nexus explains that output is controlled by system sound settings. The speaker test uses the selected output; general notification sounds retain their system output.
+
+Device choices, input processing and quality stay local for each account/browser. They do not sync to another computer's hardware. Opening Settings only enumerates devices; using an input chooser can briefly capture that input to reveal its names. Joining a call starts microphone capture, and turning the camera on starts video capture. Active input switches retain the old track until sender replacement succeeds, preserve mute/deafen/stage restrictions and keep screen sharing independent. Failed changes preserve the working input. Disconnecting hardware prompts the user to choose a connected input.
+
+Camera defaults to a 1080p/30 FPS capture target and a 6 Mbps automatic sender ceiling; screen sharing defaults to 1080p/60 FPS with a 12 Mbps ceiling. Both offer 480p, 720p, 1080p, 1440p and 4K; frame rates are 15, 24, 30 and 60. Manual video bitrate ceilings are 4, 8, 12, 20 and 40 Mbps. Microphone sender audio is capped at 128 kbps. These are upper limits/preferences, not reserved bandwidth. Actual capture dimensions/FPS are shown separately; actual encoded throughput can be lower. Every remote peer adds mesh upload traffic.
+
+Live quality changes apply constraints to existing tracks and update negotiated sender parameters. A failed constraint change restores the previous constraints. Screen constraints scale the user's selected surface, never bypass its permission chooser. Sharing starts from a deliberate click, as required by browsers.
+
+Output, capture and sender API support is detected at runtime. Physical microphone/camera changes, Bluetooth routes and WebRTC delivery still require deployment testing on the intended browsers/devices.
+
+## Per-person listening volume
+
+Right-click a participant's tile, avatar or member row, use Shift+F10 on it, or use the tile's member-options button. Touch devices also support the options button and a long press. When you share an active call, the menu exposes 0–200% volume, Mute for me and Reset. The same user keeps their setting after reconnection, even if their socket ID changes. Changes affect only your listening audio and stay local to your account/device.
+
+Non-default levels use an independent Web Audio gain and generated MediaStream for each peer. The generated stream still plays through the existing HTML audio element and selected speaker; no gain node connects directly to physical output. Deafen, blocks, stage/server restrictions and unavailable output routes silence that element immediately. Disconnecting removes generated graphs/tracks without stopping the original received tracks. Browsers without Web Audio expose reductions through their native volume control, up to 100%.
+
+A suspended audio context requires the existing Enable call audio action. Amplification can make a quiet signal louder, but cannot repair clipped or distorted microphone input.
+
 ## Required hosting configuration
 
 1. Serve the Node application over HTTPS with WebSocket upgrades and persistent storage. Localhost is suitable for development. A plain HTTP address on another device generally cannot capture microphone or camera media.
@@ -49,3 +69,9 @@ Primary references:
 For relay diagnostics, set RTC_RELAY_ONLY=true with a real relay configuration and restart. Verify inbound media on both devices; then restore the desired policy. This setting does not create a relay.
 
 The m-line association rule is defined in the W3C WebRTC RTP Media API: https://www.w3.org/TR/webrtc/#rtp-media-api
+
+Device and capture references:
+
+- https://www.w3.org/TR/audio-output/
+- https://www.w3.org/TR/screen-capture/
+- https://www.w3.org/TR/mediacapture-streams/

@@ -3,12 +3,13 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
+const { VERSION } = require('./release');
 
 // Keep each page's stylesheet and complete module graph on the same client build.
 const ASSET_SETTINGS = Object.freeze({ prefix: '/client', hashLength: 20, maxAgeSeconds: 31536000 });
 const MIME_TYPES = Object.freeze({ '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' });
 
-function installPublicAssets(app, directory) {
+function installPublicAssets(app, directory, { version = VERSION } = {}) {
   const assets = new Map();
   function collect(folder, relative = '') {
     for (const entry of fs.readdirSync(folder, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
@@ -23,11 +24,13 @@ function installPublicAssets(app, directory) {
   }
   collect(directory);
   const template = fs.readFileSync(path.join(directory, 'index.html'), 'utf8');
-  const hash = createHash('sha256').update('index.html\0').update(template);
+  const hash = createHash('sha256').update('index.html\0').update(template).update('\0version\0' + version);
   for (const [name, asset] of assets) hash.update('\0' + name + '\0').update(asset.bytes);
   const buildId = hash.digest('hex').slice(0, ASSET_SETTINGS.hashLength), prefix = `${ASSET_SETTINGS.prefix}/${buildId}`;
-  const html = template.replace(/\b(src|href)=(['"])\/([^'"?#]+\.(?:js|css))(?:\?[^'"]*)?\2/g,
+  const versioned = template.replace(/\b(src|href)=(['"])\/([^'"?#]+\.(?:js|css))(?:\?[^'"]*)?\2/g,
     (match, attribute, quote, name) => assets.has(name) ? `${attribute}=${quote}${prefix}/${name}${quote}` : match);
+  const metadata = `<meta name="nexus-version" content="${version}"><meta name="nexus-build" content="${buildId}">`;
+  const html = versioned.includes('<head>') ? versioned.replace('<head>', '<head>' + metadata) : metadata + versioned;
 
   function sendIndex(req, res) {
     res.set({ 'Cache-Control': 'no-store', 'X-Nexus-Build': buildId, 'Content-Type': 'text/html; charset=utf-8' });

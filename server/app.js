@@ -10,9 +10,12 @@ const { openDatabase, transaction } = require('./database');
 const { changedFields } = require('./audit');
 const { createBadges } = require('./badges');
 const { installPublicAssets } = require('./public-assets');
-const { COOKIE_NAME, hashPassword, checkPassword, findSession, createSession } = require('./auth');
+const { VERSION } = require('./release');
+const { COOKIE_NAME, hashPassword, checkPassword, normalizeLoginUsername, validPasswordHash, findSession, createSession } = require('./auth');
 const { installUploads } = require('./uploads');
 const { installLifecycle } = require('./lifecycle');
+const { createMailer } = require('./mailer');
+const { installAccountSecurity } = require('./account-security');
 const { installCommunity, CHANNEL_TYPES, CHANNEL_ICONS, isVoice, isForum } = require('./community');
 const GIFS = require('../public/assets/gifs/catalog.json');
 const { providerGif } = require('./gifs');
@@ -53,10 +56,11 @@ function imageType(buffer) {
   return null;
 }
 
-function createApp(config) {
+function createApp(config, { mailTransport } = {}) {
   const app = express();
   const db = openDatabase(config.databasePath);
   const requestSecurity = createRequestSecurity(config);
+  const mailer = createMailer(config,mailTransport);
   const badges = createBadges(db, config);
   fs.mkdirSync(config.uploadPath, { recursive: true });
   // Badges use immutable account IDs; display names never grant privileges.
@@ -79,6 +83,8 @@ function createApp(config) {
     for (const [key, item] of recentMessages) if (item.at < cutoff) recentMessages.delete(key);
     for (const [key, bucket] of buckets) if (bucket.since < cutoff) buckets.delete(key);
     db.prepare('DELETE FROM sessions WHERE expiresAt < ?').run(Date.now());
+    db.prepare('DELETE FROM account_tokens WHERE expiresAt <= ?').run(Date.now());
+    db.prepare('DELETE FROM support_recovery_tokens WHERE expiresAt <= ?').run(Date.now());
     if (io) for (const socket of io.sockets.sockets.values()) {
       if (!db.prepare('SELECT 1 FROM sessions WHERE hash = ? AND expiresAt > ?').get(socket.sessionHash, Date.now())) {
         socket.emit('session:expired'); socket.disconnect(true);
@@ -94,7 +100,7 @@ function createApp(config) {
       'Cross-Origin-Resource-Policy': 'same-origin',
       'Referrer-Policy': 'same-origin',
       'X-Frame-Options': 'SAMEORIGIN',
-      'Permissions-Policy': 'camera=(self), microphone=(self), display-capture=(self)',
+      'Permissions-Policy': 'camera=(self), microphone=(self), display-capture=(self), speaker-selection=(self)',
       'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss: https://api.giphy.com https://media.giphy.com https://media0.giphy.com https://media1.giphy.com https://media2.giphy.com https://media3.giphy.com https://media4.giphy.com; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'",
     });
     next();
@@ -107,6 +113,26 @@ function createApp(config) {
     }
     if (++bucket.count > max) throw new HttpError(429, 'A little too fast. Please try again in a minute.');
   }
+  // Read real application tables without exposing records or filesystem locations.
+  app.get('/api/ready', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+      const session = findSession(db, req.headers.cookie);
+      limit(`ready:${session?.userId || req.ip}`, config.requestsPerMinute);
+      db.prepare('SELECT id FROM users LIMIT 1').get();
+      db.prepare('SELECT id FROM conversations LIMIT 1').get();
+      db.prepare('SELECT value FROM app_settings LIMIT 1').get();
+      db.prepare('SELECT userId FROM account_security LIMIT 1').get();
+      db.prepare('SELECT hash FROM account_tokens LIMIT 1').get();
+      db.prepare('SELECT hash FROM recovery_codes LIMIT 1').get();
+      db.prepare('SELECT hash FROM support_recovery_tokens LIMIT 1').get();
+      res.json({ ok: true, database: 'ready', buildId: publicAssets.buildId, protocol: 1, version: VERSION });
+    } catch (error) {
+      if (error.status && error.status < 500) throw error;
+      console.error('[Nexus readiness] Database read failed:', error.message);
+      res.status(503).json({ ok: false, database: 'unavailable', protocol: 1 });
+    }
+  });
   app.use('/api', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
     res.vary('Origin'); res.vary('Sec-Fetch-Site');
@@ -293,9 +319,11 @@ function createApp(config) {
     const credential = createHmac('sha1',config.turnSharedSecret).update(username).digest('base64');
     return config.iceServers.map(server => [].concat(server.urls).some(url=>/^turns?:/i.test(url)) ? {...server, username, credential} : server);
   }
-  app.get('/api/health', (req, res) => res.json({ ok: true, version: '2.17.0' }));
+  app.get('/api/health', (req, res) => res.json({ ok: true, version: VERSION, buildId: publicAssets.buildId }));
   app.get('/api/config', (req, res) => res.json({
+    version: VERSION, clientBuild: publicAssets.buildId,
     csrfToken: requestSecurity.issueToken(req, res),
+    passwordRecovery: { emailAvailable: mailer.available, codeCount: config.recovery?.codeCount || 8 },
     registrationOpen: config.registrationOpen, minPasswordLength: config.minPasswordLength, maxMessageLength: config.maxMessageLength,
     maxUploadBytes: config.maxUploadBytes, maxProfileBytes: config.maxProfileBytes, maxServerImageBytes: config.maxServerImageBytes,
     uploadChunkBytes: config.uploadChunkBytes, idleAfterMs: config.idleAfterMs, creatorUsername: config.creatorUsername, creatorClaimAvailable: !creatorId && Boolean(config.creatorClaimToken),
@@ -332,12 +360,15 @@ function createApp(config) {
   });
   app.post('/api/auth/login', async (req, res) => {
     limit(`auth:${req.ip}`, config.authAttemptsPerMinute);
-    const username = text(req.body.username, 24, 'Username', 1);
+    const username = normalizeLoginUsername(req.body.username);
     const password = typeof req.body.password === 'string' ? req.body.password : '';
     if (password.length > config.maxPasswordLength) throw new HttpError(400, 'Invalid username or password.');
-    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
-    const valid = await checkPassword(password, user?.passwordHash || await dummyPassword);
-    if (!valid || !user) throw new HttpError(401, 'Invalid username or password.');
+    const user = username ? db.prepare('SELECT * FROM users WHERE username = ?').get(username) : null;
+    const usableHash = validPasswordHash(user?.passwordHash);
+    const valid = await checkPassword(password, usableHash ? user.passwordHash : await dummyPassword);
+    // A password reset can finish while scrypt is running; never create a stale session.
+    const currentHash = user && db.prepare('SELECT passwordHash FROM users WHERE id=?').get(user.id)?.passwordHash;
+    if (!valid || !user || !usableHash || currentHash !== user.passwordHash) throw new HttpError(401, 'Invalid username or password.');
     if (req.session) db.prepare('DELETE FROM sessions WHERE hash = ?').run(req.session.hash);
     createSession(db, res, user.id, config);
     res.json({ user: publicUser(user) });
@@ -347,6 +378,9 @@ function createApp(config) {
     for (const socket of io?.sockets.sockets.values() || []) if (socket.sessionHash === req.session.hash) socket.disconnect(true);
     res.clearCookie(COOKIE_NAME, { path: '/', secure: config.secureCookies, httpOnly: true, sameSite: 'strict' });
     res.json({ ok: true });
+  });
+  const accountSecurity = installAccountSecurity(app, { db, config, auth, HttpError, limit, checkPassword, hashPassword, mailer,
+    revokeSessions(userId) { for (const socket of io?.sockets.sockets.values() || []) if (socket.userId===userId) { socket.emit('session:expired');socket.disconnect(true); } },
   });
   installLifecycle(app, { db, config, auth, HttpError, checkPassword, COOKIE_NAME, limit, owner, serverUsers, relatedUsers, updateWorkspace, refreshUserBadges, getIO: () => io, voice, leaveVoice, onCreatorDeleted: () => { creatorId = ''; }, onAccountDeleted: userId => { social.clearCache();for(const key of recentMessages.keys())if(key.startsWith(`${userId}:`))recentMessages.delete(key); } });
   app.get('/api/bootstrap', auth, (req, res) => {
@@ -1014,7 +1048,7 @@ function createApp(config) {
     });
     return io;
   }
-  return { app, db, attachRealtime, close() { clearInterval(cleanup); closeUploads(); db.close(); } };
+  return { app, db, mailer, accountSecurity, buildId: publicAssets.buildId, attachRealtime, close() { clearInterval(cleanup); closeUploads(); mailer.close(); db.close(); } };
 }
 
 module.exports = { createApp };

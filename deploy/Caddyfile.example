@@ -1,0 +1,4 @@
+# Replace the hostname with the same HTTPS origin used by the native clients.
+nexus.example.com {
+    reverse_proxy 127.0.0.1:3000
+}

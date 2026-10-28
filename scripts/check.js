@@ -7,8 +7,10 @@ const { spawnSync } = require('node:child_process');
 // Browser modules are checked as ESM; the retained server uses CommonJS.
 const ROOT = join(__dirname, '..');
 const SERVER_FOLDERS = ['server', 'scripts', 'test'];
+const SKIP = new Set(['node_modules', 'resources', 'dist', 'build', '.gradle']);
+function scripts(folder) { return readdirSync(join(ROOT, folder), {withFileTypes:true}).flatMap(entry => SKIP.has(entry.name) ? [] : entry.isDirectory() ? scripts(`${folder}/${entry.name}`) : /\.(?:js|cjs)$/.test(entry.name) ? [`${folder}/${entry.name}`] : []); }
 const browserFiles = readdirSync(join(ROOT, 'public')).filter(name => name.endsWith('.js'));
-const serverFiles = ['server.js', ...SERVER_FOLDERS.flatMap(folder => readdirSync(join(ROOT, folder)).filter(name => name.endsWith('.js')).map(name => `${folder}/${name}`))];
+const serverFiles = ['server.js', ...SERVER_FOLDERS.flatMap(scripts)];
 let failures = 0;
 for (const filename of serverFiles) {
   const result = spawnSync(process.execPath, ['--check', join(ROOT, filename)], { encoding: 'utf8' });

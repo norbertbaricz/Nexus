@@ -1,12 +1,17 @@
 import * as UI from './ui.js';
 import { VoiceActivity } from './voice-activity.js';
+import { syncMarkup } from './dom.js';
+import { CallAudioOutput } from './media-devices.js';
+import { ParticipantAudio } from './participant-audio.js';
 
 const MEDIA_READY_STATE = 2;
 
 // Reuse media elements during presence, mute and layout updates.
 export class NexusMediaView {
-  constructor({ getState, getCall, getSocketId, getRoot, getMediaRoot, onPlaybackBlocked }) {
+  constructor({ getState, getCall, getSocketId, getRoot, getMediaRoot, onPlaybackBlocked, onOutputError = () => {}, storage }) {
     Object.assign(this, { getState, getCall, getSocketId, getRoot, getMediaRoot, onPlaybackBlocked });
+    this.audio = new ParticipantAudio({ storage, onReady: () => this.bind(), onError: onOutputError });
+    this.output = new CallAudioOutput({ getElements: () => this.getMediaRoot()?.querySelectorAll('audio') || [], createElement: () => document.createElement('audio'), onReady: () => this.bind(), onError: onOutputError });
     this.activity = new VoiceActivity({ onChange: (key, speaking, level) => {
       for (const tile of this.getRoot()?.querySelectorAll(`.voice-tile[data-peer="${CSS.escape(key)}"]`) || []) {
         tile.classList.toggle('is-speaking', speaking);
@@ -15,7 +20,7 @@ export class NexusMediaView {
       }
     } });
   }
-  markup(node, html) { if (node && node._nexusMarkup !== html) { node.innerHTML = html; node._nexusMarkup = html; } }
+  markup(node, html) { syncMarkup(node, html); }
   update() {
     const state = this.getState(), call = this.getCall();
     const view = this.getRoot()?.querySelector('.voice-view');
@@ -61,24 +66,27 @@ export class NexusMediaView {
   playAudio(audio) {
     if (audio.dataset.attempted === 'true' || !audio.srcObject?.getAudioTracks().length) return;
     audio.dataset.attempted = 'true';
-    audio.play().then(() => { audio.dataset.blocked = 'false'; this.checkPlayback(); }).catch(() => {
-      if (!audio.isConnected || !this.getCall().active) return;
+    const stream=audio.srcObject;
+    audio.play().then(() => { if(audio.srcObject!==stream||!audio.isConnected)return;audio.dataset.blocked = 'false'; this.checkPlayback(); }).catch(() => {
+      if (!audio.isConnected || !this.getCall().active || audio.srcObject!==stream) return;
       audio.dataset.blocked = 'true'; this.checkPlayback();
     });
   }
   checkPlayback() {
-    const blocked = Boolean(this.getMediaRoot()?.querySelector('audio[data-blocked=true]'));
+    const blocked = this.audio.blocked || [...this.getMediaRoot()?.querySelectorAll('audio') || []].some(audio=>!audio.muted&&audio.dataset.blocked==='true');
     if (blocked !== this.getState().audioBlocked) this.onPlaybackBlocked(blocked);
   }
   async enableAudio() {
+    const resumed = this.audio.unlock();
     this.activity.resume();
+    await resumed; this.bind();
     const audios = [...this.getMediaRoot().querySelectorAll('audio')];
     await Promise.all(audios.map(async audio => { audio.dataset.attempted = 'false'; this.playAudio(audio); }));
   }
   bind() {
     const call = this.getCall(), state = this.getState(), media = this.getMediaRoot();
     if (!call.active) {
-      this.activity.stop(); media.replaceChildren();
+      this.activity.stop(); if(!call.joining&&!this.preparingAudio)this.audio.stop(); media.replaceChildren();
       for (const tile of this.getRoot()?.querySelectorAll('.voice-tile') || []) { tile.querySelector('video')?.remove(); tile.classList.remove('has-video'); }
       this.checkPlayback(); return;
     }
@@ -88,13 +96,14 @@ export class NexusMediaView {
     for (const [socketId, peer] of call.peers) {
       live.add(socketId);
       let audio = media.querySelector(`[data-audio-peer="${CSS.escape(socketId)}"]`);
-      if (!audio) { audio = document.createElement('audio'); audio.autoplay = true; audio.setAttribute('playsinline', ''); audio.dataset.audioPeer = socketId; media.append(audio); }
-      if (audio.srcObject !== peer.stream) { audio.srcObject = peer.stream; audio.dataset.attempted = 'false'; audio.dataset.blocked = 'false'; }
+      if (!audio) { audio = document.createElement('audio'); audio.muted = true; audio.autoplay = true; audio.setAttribute('playsinline', ''); audio.dataset.audioPeer = socketId; media.append(audio); }
       const participant = state.voice.find(person => person.socketId === socketId);
-      audio.muted = call.deafened || participant?.stageSpeaker === false || participant?.canSpeak === false || state.blockedIds?.includes(participant?.userId); this.playAudio(audio);
+      const routed = this.output.route(audio);
+      const silenced = !routed || !participant || call.deafened || participant.stageSpeaker === false || participant.canSpeak === false || state.blockedIds?.includes(participant.userId);
+      this.audio.apply(socketId, participant?.userId, peer.stream, audio, silenced); if (routed && !audio.muted) this.playAudio(audio);
       activityKeys.add(socketId); this.activity.watch(socketId, peer.stream, audio.muted || participant?.muted);
     }
-    this.activity.retain(activityKeys);
+    this.activity.retain(activityKeys); this.audio.retain(live);
     for (const audio of media.querySelectorAll('audio')) if (!live.has(audio.dataset.audioPeer)) audio.remove();
     for (const tile of this.getRoot()?.querySelectorAll('.voice-tile[data-media-key]') || []) {
       const local = tile.dataset.peer === this.getSocketId();

@@ -26,6 +26,19 @@ const CONFIG = Object.freeze({
   secureCookies: process.env.SECURE_COOKIES === 'true',
   registrationOpen: process.env.REGISTRATION_OPEN !== 'false',
   giphyApiKey: (process.env.GIPHY_API_KEY || '').trim(),
+  // SMTP is optional. Recovery codes work without an external mail service.
+  mail: Object.freeze({
+    host: (process.env.MAIL_HOST || '').trim(), port: Number(process.env.MAIL_PORT || 587),
+    secure: process.env.MAIL_SECURE === 'true', from: (process.env.MAIL_FROM || '').trim(),
+    user: process.env.MAIL_USER || '', password: process.env.MAIL_PASSWORD || '',
+    connectionTimeoutMs: 10000, greetingTimeoutMs: 10000, socketTimeoutMs: 20000,
+    maxQueue: 50, concurrency: 2,
+  }),
+  recovery: Object.freeze({
+    resetTokenMinutes: 20, verificationTokenMinutes: 1440, supportTokenMinutes: 15, tokenBytes: 32,
+    codeBytes: 16, codeCount: 8, cooldownMs: 60000, responseDelayMs: 250,
+    requestsPerMinute: 4, proofAttemptsPerMinute: 6, settingsPerMinute: 4,
+  }),
   sessionDays: 14,
   minPasswordLength: 10,
   maxPasswordLength: 128,

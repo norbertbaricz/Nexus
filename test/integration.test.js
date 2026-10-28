@@ -1028,14 +1028,17 @@ test('new interface palettes persist and synchronize between authenticated sessi
  }
 });
 
-test('the production page serves matching CSS and its complete native module graph after upgrades', async () => {
+test('the production page serves matching CSS and its complete website module graph after upgrades', async () => {
  const page=await fetch(base+'/'),html=await page.text(),buildId=page.headers.get('x-nexus-build');
  assert.equal(page.headers.get('cache-control'),'no-store');assert.match(buildId,/^[a-f0-9]{20}$/);
- const prefix=`/client/${buildId}/`,entry=html.match(/<script type="module" src="([^"]+)"/)[1],style=html.match(/rel="stylesheet" href="([^"]+)"/)[1];
- assert.equal(entry,prefix+'app.js');assert.equal(style,prefix+'styles.css');
+ const prefix=`/client/${buildId}/`,entries=[...html.matchAll(/<script type="module" src="([^"]+)"/g)].map(match=>match[1]),styles=[...html.matchAll(/rel="stylesheet" href="([^"]+)"/g)].map(match=>match[1]),style=styles[0];
+ assert.deepEqual(entries,[prefix+'app.js']);assert.deepEqual(styles,[prefix+'styles.css']);
+ assert.ok(html.includes('name="nexus-version" content="2.23.0"'));assert.ok(html.includes(`name="nexus-build" content="${buildId}"`));assert.equal(html.includes('native-boot'),false);
+ const health=await api('/api/health');assert.equal(health.data.version,'2.23.0');assert.equal(health.data.buildId,buildId);
+ for(const url of styles){const response=await fetch(base+url);assert.equal(response.status,200);assert.equal(response.headers.get('x-nexus-build'),buildId);}
  const stylesheet=await fetch(base+style);assert.equal(stylesheet.status,200);assert.equal(stylesheet.headers.get('x-nexus-build'),buildId);
  assert.ok((await stylesheet.text()).includes('.viewer-close'));
- const queue=[new URL(entry,base).href],seen=new Set();
+ const queue=entries.map(entry=>new URL(entry,base).href),seen=new Set();
  while(queue.length){
   const url=queue.shift();if(seen.has(url))continue;seen.add(url);
   const response=await fetch(url);assert.equal(response.status,200,url);assert.equal(response.headers.get('x-nexus-build'),buildId);
@@ -1105,4 +1108,15 @@ test('blocking in either direction hides current profile images as well as peopl
  assert.equal((await fetch(base+image.url,{headers:{Cookie:viewer.cookie}})).status,404);
  assert.deepEqual((await api('/api/users?q=@image_217_owner',{cookie:viewer.cookie})).data.users,[]);
  assert.equal((await fetch(base+image.url,{headers:{Cookie:owner.cookie}})).status,200);
+});
+
+test('readiness verifies database reads and identifies the exact served UI build without user data',async()=>{
+  const response=await api('/api/ready'); assert.equal(response.status,200); assert.equal(response.data.ok,true); assert.equal(response.data.database,'ready'); assert.equal(response.data.protocol,1); assert.equal(response.data.version,'2.23.0');
+  assert.match(response.data.buildId,/^[a-f0-9]{20}$/); assert.equal(response.headers.get('cache-control'),'no-store');
+  const html=await fetch(base+'/'); assert.equal(html.headers.get('x-nexus-build'),response.data.buildId);
+  assert.deepEqual(Object.keys(response.data).sort(),['buildId','database','ok','protocol','version']);
+  // A broken schema is observable as unavailable, even with a session cookie.
+  instance.db.exec('ALTER TABLE app_settings RENAME TO readiness_test_settings');
+  try { const unavailable=await api('/api/ready',{cookie:alice.cookie}); assert.equal(unavailable.status,503); assert.deepEqual(unavailable.data,{ok:false,database:'unavailable',protocol:1}); assert.equal(unavailable.headers.get('cache-control'),'no-store'); }
+  finally { instance.db.exec('ALTER TABLE readiness_test_settings RENAME TO app_settings'); }
 });

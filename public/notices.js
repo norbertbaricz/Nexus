@@ -56,15 +56,16 @@ export class Notices {
   dismiss(node) {
     if(!node)return;clearTimeout(this.timers.get(node));this.items.delete(node.dataset.notice);node.remove();this.resize();
   }
-  show(message,error=false) {
+  show(message,error=false,{duration=CONFIG.toastDurationMs,action=null}={}) {
     const key=`${error}:${message}`,existing=this.items.get(key);
-    if(existing?.isConnected){clearTimeout(this.timers.get(existing));this.timers.set(existing,setTimeout(()=>this.dismiss(existing),CONFIG.toastDurationMs));return existing;}
+    if(existing?.isConnected){clearTimeout(this.timers.get(existing));if(duration>0)this.timers.set(existing,setTimeout(()=>this.dismiss(existing),duration));return existing;}
     while(this.root.children.length>=CONFIG.maxToasts)this.dismiss(this.root.firstElementChild);
     const node=document.createElement('div');node.className=`toast${error?' error':''}`;node.dataset.notice=key;
     node.innerHTML=`${icon(error?'bell':'check',18)}<span class="toast-message"></span><button class="icon-button" type="button" data-action="dismiss-toast" aria-label="Dismiss notification">${icon('close',18)}</button>`;
     node.querySelector('.toast-message').textContent=message;
+    if(action){const button=document.createElement('button');button.type='button';button.className='toast-action';button.dataset.action=action.name;button.textContent=action.label;node.insertBefore(button,node.lastElementChild);}
     this.items.set(key,node);this.root.append(node);this.resize();
-    const start=()=>{clearTimeout(this.timers.get(node));this.timers.set(node,setTimeout(()=>this.dismiss(node),CONFIG.toastDurationMs));};
+    const start=()=>{clearTimeout(this.timers.get(node));if(duration>0)this.timers.set(node,setTimeout(()=>this.dismiss(node),duration));};
     node.addEventListener('pointerenter',()=>clearTimeout(this.timers.get(node)));node.addEventListener('pointerleave',start);
     node.addEventListener('focusin',()=>clearTimeout(this.timers.get(node)));node.addEventListener('focusout',start);start();return node;
   }
