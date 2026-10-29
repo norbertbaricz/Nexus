@@ -19,7 +19,16 @@ test('remote audio starts on track arrival and each mute/deafen/block gate stays
  view.bind();const one=elements.find(a=>a.dataset.audioPeer==='one'),two=elements.find(a=>a.dataset.audioPeer==='two');assert.equal(one.srcObject,null);assert.equal(one.plays,0);assert.equal(two.muted,true);
  tracks=[track];view.bind();await Promise.resolve();assert.equal(one.srcObject,stream);assert.equal(one.plays,1);assert.equal(one.muted,false);assert.equal(two.muted,true);
  people.push({socketId:'three',userId:'u_three',conversationId:'room',muted:true});call.peers.set('three',{stream:otherStream});view.bind();assert.equal(elements.find(a=>a.dataset.audioPeer==='one'),one);assert.equal(one.plays,1);assert.equal(one.muted,false);
+ for(const volume of [35,0,70]){view.audio.setVolume('u_one',volume);view.bind();assert.equal(one.volume,volume/100);assert.equal(one.muted,volume===0);assert.equal(two.muted,true);assert.equal(one.srcObject,stream);assert.equal(one.plays,1);}
+ view.audio.setMuted('u_one',true);view.bind();assert.equal(one.muted,true);view.audio.reset('u_one');view.bind();assert.equal(one.volume,1);assert.equal(one.muted,false);assert.equal(one.plays,1);assert.equal(elements.find(a=>a.dataset.audioPeer==='one'),one);
  call.deafened=true;view.bind();assert.ok(elements.every(a=>a.muted));call.deafened=false;people[1].muted=false;people[1].deafened=true;view.bind();assert.equal(one.muted,false);assert.equal(two.muted,true);
  state.blockedIds=['u_one'];people[1].deafened=false;view.bind();assert.equal(one.muted,true);assert.equal(two.muted,false);
  people[1].canSpeak=false;view.bind();assert.equal(two.muted,true);call.active=null;view.bind();assert.equal(elements.length,0);assert.equal(track.stops,0);
+});
+
+test('leaving a participant card releases main and inset players without stopping call-owned tracks',async()=>{
+ const {NexusMediaView}=await import(source('media-view.js'));let pauses=0,removals=0,stops=0,insets=0;const track={stop(){stops++;}},stream={getTracks:()=>[track]};
+ const videos=['primary','camera'].map(role=>({dataset:{mediaRole:role},srcObject:stream,pause(){pauses++;},remove(){removals++;}})),classes=new Set(['has-video','has-camera-inset','is-portrait']);
+ const tile={querySelectorAll:()=>videos,querySelector:()=>({remove(){insets++;}}),classList:{remove(...names){names.forEach(name=>classes.delete(name));}}},view=Object.create(NexusMediaView.prototype);view.getRoot=()=>({querySelectorAll:()=>[tile]});
+ view.releaseVideoTiles();assert.equal(pauses,2);assert.equal(removals,2);assert.equal(insets,1);assert.ok(videos.every(video=>video.srcObject===null));assert.equal(classes.size,0);assert.equal(stops,0);
 });

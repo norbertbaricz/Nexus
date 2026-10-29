@@ -23,7 +23,8 @@ export class NexusMediaView {
   markup(node, html) { syncMarkup(node, html); }
   releaseVideoTiles() {
     for(const tile of this.getRoot()?.querySelectorAll('.voice-tile') || []) {
-      const video=tile.querySelector('video');if(video){video.pause();video.srcObject=null;video.remove();}tile.classList.remove('has-video');
+      for(const video of tile.querySelectorAll('video')){video.pause();video.srcObject=null;video.remove();}
+      tile.querySelector('.tile-camera')?.remove();tile.classList.remove('has-video','has-camera-inset','is-portrait');
     }
   }
   update() {
@@ -33,8 +34,8 @@ export class NexusMediaView {
     const layout = UI.voiceLayout(state), grid = view.querySelector('#voice-grid');
     grid.classList.toggle('presentation-layout', Boolean(layout.focusKey));
     const existing = new Map([...grid.querySelectorAll('[data-media-key]')].map(tile => [tile.dataset.mediaKey, tile]));
-    const keys = new Set(layout.tiles.map(tile => `${tile.socketId}:${tile.kind}`));
-    for (const [key, tile] of existing) if (!keys.has(key)) tile.remove();
+    const keys = new Set(layout.tiles.map(tile => UI.voiceTileKey(tile)));
+    for (const [key, tile] of existing) if (!keys.has(key)) { for(const video of tile.querySelectorAll('video')){video.pause();video.srcObject=null;}tile.remove(); }
     const host = className => {
       let node = [...grid.children].find(child => child.classList.contains(className));
       if (!node) { node = document.createElement('div'); node.className = className; grid.append(node); }
@@ -46,7 +47,7 @@ export class NexusMediaView {
     const positions = new Map([[primary, 0], [thumbnails, 0]]);
     for (const empty of grid.querySelectorAll('.voice-empty')) empty.remove();
     layout.tiles.forEach(descriptor => {
-      const key = `${descriptor.socketId}:${descriptor.kind}`;
+      const key = UI.voiceTileKey(descriptor);
       const template = document.createElement('template');
       template.innerHTML = UI.voiceTileMarkup(state, descriptor, key === layout.focusKey);
       const desired = template.content.firstElementChild;
@@ -55,6 +56,7 @@ export class NexusMediaView {
       else {
         tile.classList.toggle('featured', key === layout.focusKey);
         tile.classList.toggle('expects-video', descriptor.kind === 'screen' ? descriptor.sharing : descriptor.camera);
+        tile.dataset.kind=descriptor.kind;tile.setAttribute('aria-label',desired.getAttribute('aria-label'));
         for (const selector of ['.tile-avatar', '.tile-name', '.tile-state', '.tile-actions']) this.markup(tile.querySelector(selector), desired.querySelector(selector).innerHTML);
       }
       const target = key === layout.focusKey ? primary : thumbnails;
@@ -74,7 +76,8 @@ export class NexusMediaView {
     const stream=audio.srcObject;
     audio.play().then(() => { if(audio.srcObject!==stream||!audio.isConnected)return;audio.dataset.blocked = 'false'; this.checkPlayback(); }).catch(() => {
       if (!audio.isConnected || !this.getCall().active || audio.srcObject!==stream) return;
-      audio.dataset.blocked = 'true'; this.checkPlayback();
+      audio.dataset.blocked = 'true';
+      if (!this.audio.outputFailed(audio.dataset.audioPeer, audio, stream)) this.checkPlayback();
     });
   }
   checkPlayback() {
@@ -88,11 +91,30 @@ export class NexusMediaView {
     const audios = [...this.getMediaRoot().querySelectorAll('audio')];
     await Promise.all(audios.map(async audio => { audio.dataset.attempted = 'false'; this.playAudio(audio); }));
   }
+  bindVideo(tile, stream, role = 'primary') {
+    let video=tile.querySelector(`video[data-media-role="${role}"]`);
+    const visible=stream?.getVideoTracks().some(track=>track.readyState==='live');
+    if(!visible){if(video){video.pause();video.srcObject=null;video.remove();}if(role==='primary')tile.classList.remove('has-video','is-portrait');else{tile.querySelector('.tile-camera')?.remove();tile.classList.remove('has-camera-inset');}return;}
+    if(!video){
+      video=document.createElement('video');video.dataset.mediaRole=role;video.autoplay=true;video.playsInline=true;video.setAttribute('playsinline','');video.muted=true;
+      const dimensions=()=>{
+        if(!video.isConnected)return;
+        tile.classList.toggle(role==='primary'?'has-video':'has-camera-inset',video.readyState>=MEDIA_READY_STATE);
+        if(role==='primary'){tile.classList.toggle('is-portrait',video.videoHeight>video.videoWidth);if(video.videoWidth&&video.videoHeight)tile.style.setProperty('--video-aspect',`${video.videoWidth} / ${video.videoHeight}`);}
+      };
+      video.addEventListener('loadeddata',dimensions);video.addEventListener('resize',dimensions);
+      if(role==='primary')tile.prepend(video);
+      else{let inset=tile.querySelector('.tile-camera');if(!inset){inset=document.createElement('div');inset.className='tile-camera';inset.setAttribute('role','img');inset.setAttribute('aria-label','Camera while sharing');tile.append(inset);}inset.append(video);}
+    }
+    if(video.srcObject!==stream){video.srcObject=stream;video.play().catch(()=>{});}
+    else if(video.paused&&video.readyState>=MEDIA_READY_STATE)video.play().catch(()=>{});
+    tile.classList.toggle(role==='primary'?'has-video':'has-camera-inset',video.readyState>=MEDIA_READY_STATE);
+  }
   bind() {
     const call = this.getCall(), state = this.getState(), media = this.getMediaRoot();
     if (!call.active) {
       this.activity.stop(); if(!call.joining&&!this.preparingAudio)this.audio.stop(); media.replaceChildren();
-      for (const tile of this.getRoot()?.querySelectorAll('.voice-tile') || []) { tile.querySelector('video')?.remove(); tile.classList.remove('has-video'); }
+      this.releaseVideoTiles();
       this.checkPlayback(); return;
     }
     const live = new Set();
@@ -115,16 +137,11 @@ export class NexusMediaView {
       const participant = state.voice.find(person => person.socketId === tile.dataset.peer);
       const screen = tile.dataset.kind === 'screen';
       const peer = call.peers.get(tile.dataset.peer);
-      const stream = local ? screen ? call.screenStream : call.cameraStream || call.localStream : screen ? peer?.screenStream : peer?.cameraStream;
-      const visible = call.active.conversationId === state.activeConv && participant && (screen ? participant.sharing : participant.camera) && stream?.getVideoTracks().some(track => track.readyState === 'live');
-      let video = tile.querySelector('video');
-      if (!visible) { video?.remove(); tile.classList.remove('has-video'); continue; }
-      if (!video) { video = document.createElement('video'); video.autoplay = true; video.playsInline = true; video.setAttribute('playsinline', ''); video.muted = true;
-        const dimensions=()=>{if(!video.isConnected)return;tile.classList.toggle('has-video',video.readyState>=MEDIA_READY_STATE);tile.classList.toggle('is-portrait',video.videoHeight>video.videoWidth);if(video.videoWidth&&video.videoHeight)tile.style.setProperty('--video-aspect',`${video.videoWidth} / ${video.videoHeight}`);};
-        video.addEventListener('loadeddata',dimensions);video.addEventListener('resize',dimensions);tile.prepend(video); }
-      if (video.srcObject !== stream) { video.srcObject = stream; video.play().catch(() => {}); }
-      else if (video.paused && video.readyState >= MEDIA_READY_STATE) video.play().catch(() => {});
-      tile.classList.toggle('has-video', video.readyState >= MEDIA_READY_STATE);
+      const camera=local?call.cameraStream||call.localStream:peer?.cameraStream;
+      const stream=screen?(local?call.screenStream:peer?.screenStream):camera;
+      const visible=call.active.conversationId===state.activeConv&&participant&&!state.blockedIds?.includes(participant.userId);
+      this.bindVideo(tile,visible&&(screen?participant.sharing:participant.camera)?stream:null);
+      this.bindVideo(tile,visible&&screen&&participant.camera?camera:null,'camera');
     }
     this.checkPlayback();
   }

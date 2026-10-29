@@ -1,3 +1,81 @@
+# Nexus 2.38 validation
+
+## Reproduction and automated checks
+
+A deterministic receiver fixture models a WebRTC audio source that supplies samples only while its raw stream has a running HTML player. With the unchanged 2.37 controller, moving to 101% replaces that raw player and the modeled processed energy becomes zero. The new controller retains a separate silent input and passes 100 → 101 → 126 → 150 → 200 → 100 → 35 → 150 without another participant. This is a receiver-playout dependency model, not a claim that a remote RTP call was established in this test environment.
+
+Node 26.12.1 passes all 379 tests. Node 24.22.1 passes 131 focused amplification, participant-audio, renderer, interface, RTC and roster cases. Syntax checks cover 67 server/test scripts and 48 browser modules. New cases cover the raw receive driver, amplification samples at the threshold and maximum, independent people, input warmup, suspended/closed contexts, refused input/output playback, user-gesture retry, late input/context completion, Reset/account isolation, output selection and every external silence gate. Fixed-volume reductions remain protected. Existing authentication, recovery, permissions, messaging, roster, camera/screen and other interface cases remain active.
+
+## Native browser checks
+
+The production audio controller and media view run with synthetic local oscillator streams and real HTML audio elements. The raw driver reaches readyState 4 while remaining muted, default-muted, zero-volume and detached from the page. The same output element remains unmuted and playing. Measured RMS values are approximately 0.01779 at 101%, 0.02218 at 126%, 0.02662 at 150% and 0.03527 at 200%, against a roughly 0.0177 source. The second person's RMS remains around 0.0177, at their unchanged native level.
+
+An injected rejection of the next processed output exercises the actual media view's play rejection path. It falls back to the original stream at 100%, stays playing with RMS around 0.01775, keeps the same player, preserves the 150% requested preference and emits one explanation. Changing the slider retries successfully at 175% with RMS around 0.03084. Suspending the processing context returns to native 100% playback with advancing time and nonzero samples; Reset restores the live slider to 100% and removes the private input. No call leave/rejoin is needed for these recovery actions.
+
+The full production interface opens as Nexus 2.38.0 with a disposable local account, passes the startup overlay and reaches connected Messages. Native checks use local synthetic media, not a hardware microphone or a production account. They verify processing, handover and fallback; a physical two-device call on the user's VPS is not marked as tested. The existing real-network verification boundary remains in [voice deployment](VOICE_DEPLOYMENT.md).
+
+## Archive and operation
+
+Schema 13, exact dependencies, all backend signaling/account logic, initial HTML, styles, startup/viewport controllers, personal community setup and licensing are preserved. Only the participant-audio controller and media-view output-failure handoff change in the browser runtime; the single-card screen/camera and live-slider fixes remain included. The complete ZIP verifies byte/CRC integrity, release fingerprints, lock semantics, browser imports and documentation links. Normal fresh launch and manual overlay from 2.37 to 2.38 preserve existing accounts/passwords, messages, environment, uploads and recovery state using the unchanged verified dependency graph. QA fixtures, installed dependencies and private storage are excluded.
+
+Replace the complete update, restart the actual Nexus process and have every participant reload to 2.38.0 before rejoining. Saved boosts remain saved; if processing is unavailable, the listener is told that native 100% playback is used. Deliberate local mute, deafen, blocks, moderation and unavailable selected output remain authoritative. No account/database reset or username-specific bypass is introduced.
+
+## Previous release verification
+
+# Nexus 2.37 validation
+
+## Reproduced defects and automated checks
+
+The previous controller is retained outside the package for comparison. In Chromium with two synthetic local peers, lowering one person to 35%, suspending that processing context and clicking Reset leaves the old player muted and the slider/output at 35%, even though the stored preference becomes 100%. The other player continues advancing and remains unmuted. This reproduces the reset and interrupted-processing defects; it does not establish the exact cause of a particular production device interruption.
+
+Node 26.12.1 passes all 369 tests. Node 24.22.1 passes 121 focused participant-audio, renderer, interface, WebRTC and roster cases. Syntax checks cover 66 server/test scripts and 48 browser modules. New regressions cover native reductions without stream replacement, zero volume, independent local mute/unmute, interrupted/closed processing contexts, immediate Reset, fixed-volume-device gain fallback, per-peer graph disposal, external silence gates, live slider properties, stable single participant descriptors and releasing main/inset players without stopping call-owned tracks. Previous roster, RTC, account, permission, recovery, message and media cases remain active.
+
+## Native browser checks
+
+The production audio controller, media binder, menu markup and DOM reconciler run with local oscillator streams and real HTML audio players. The updated person at 35% keeps the same player and original stream, remains unmuted/playing and leaves the other player at 100%. The interrupted-context Reset sequence restores the player, thumb, percentage and accessibility value to 100% without leaving or replacing the player. Local mute/unmute restores 45% while preserving the other person's audio. A 150% gain path produces approximately 0.0264 RMS from a 0.0177 RMS source; both players remain playing. These are local synthetic audio/rendering checks, not remote network or physical-speaker certification.
+
+Real canvas capture streams exercise the production participant markup, layout and media binder. Two participants produce two cards, with exactly one card for the presenter. Screen and portrait-camera inset both reach readyState 4. Grid/focus, camera off/on and share off/on retain the same participant card and primary video element. A DM-context check also reaches readyState 4 for both video roles with one presenter card. Context navigation can remount the view; focus/share transitions within a view preserve it.
+
+CSS viewports 320 × 568, 390 × 844, 844 × 390, 768 × 1024, 1280 × 720 and 1920 × 1080 retain one presenter card, have no document-width overflow, keep tile actions and the camera inset inside their card, and have no action/action or inset/action overlap. The short landscape inset shrinks to preserve control/label space. These are Chromium CSS-viewport checks, not physical iOS/Android or Safari certification. No hardware capture, user credentials, live account or VPS is accessed.
+
+## Package and operation
+
+The full application loads as Nexus 2.37.0 with a disposable local account, clears its startup overlay and reaches the connected Messages view. No production account is used.
+
+Schema 13, exact dependency pins, all backend account/signaling logic, original licenses, personal community setup, startup/viewport controllers and initial HTML are preserved. Release fingerprints, semantic lock consistency, import reachability, documentation links and archive byte/CRC integrity are verified. A normal Node 26 fresh launch and manual overlay from 2.36 preserve private configuration, accounts/passwords, messages, uploads and recovery state. Existing installed dependencies are reused from the unchanged verified dependency graph.
+
+Install the complete ZIP and restart the actual Nexus process. Every participant should reload to 2.37.0 before rejoining. Saved reductions are retained and use the new path; a deliberately saved local mute remains active until Unmute for me or Reset. Reset affects only that listener's setting for the selected person and cannot override blocks, deafen, moderation or output routing. Physical two-device calls and fixed-volume browser hardware remain deployment verification.
+
+## Previous release verification
+
+# Nexus 2.36 validation
+
+## Reproduction and automated checks
+
+Node 26.12.1 passes all 360 tests. Node 24.22.1 passes 56 focused voice-state, WebRTC, media-view and participant-audio cases. Syntax checks cover 66 server/test scripts and 48 browser modules. Schema 13, exact dependencies, original identity/recovery data, startup/viewport controllers, 2.35 confirmation styles, licensing and personal community setup remain unchanged.
+
+The unchanged 2.35 production response/event handlers reproduce the reported sequence: live roster friend/main → a late bootstrap removes main → a third arrival restores friend/main/secondary. The renderer's existing missing-member gate can therefore silence a valid stream until another room update. This demonstrates a code defect with the described effect; the user's production account/database and physical call were not accessed.
+
+The regression suite executes the production refresh and voice-event handlers with the actual audio binder. A live unmute/join survives stale HTTP data without a third peer; an HTTP-only roster completion binds audio immediately; a muted third peer cannot change the first stream/player. Cases preserve empty-room removals, unaffected room data, current access, account isolation, superseding snapshots and failure cleanup. Initial authenticated bootstrap hydrates the user before local account state exists, while a different-account or invalidated response is discarded. The join callback is verified to precede initial media offers.
+
+Real HTTP/SQLite/Socket.IO tests verify full initial/repeated join rosters, current mute flags, blocked-member filtering, third-peer independence and stage listener restrictions. Existing negotiation, capture, sender rollback, output routing, per-person levels, notifications, file processing, recovery and interface regressions remain active.
+
+## Browser checks and boundary
+
+The complete application opens with a disposable authenticated local fixture, passes the startup overlay and reaches the connected Messages interface. No user credentials, production account or live VPS are accessed.
+
+The production renderer and snapshot helper run with a synthetic local tone and native HTML audio player, without hardware capture. Before any third arrival, the main player reaches readyState 4 and advances to about 9.89 seconds while remaining unmuted after a stale muted snapshot. Adding a muted secondary retains the same main player, still unmuted with time advancing to about 26.49 seconds; the secondary remains muted/paused.
+
+Native RTCPeerConnection checks reach stable signaling with an audio sendrecv slot for each pair. The first two senders remain enabled and the muted third sender remains disabled. This environment gathers zero ICE candidates and does not demonstrate remote RTP delivery. Physical microphones, real-network audio and the actual VPS account must still be verified after installing/reloading the update. No browser policy or network restriction is weakened.
+
+## Package and operation
+
+The complete ZIP verifies fingerprints, byte/CRC integrity, semantic dependency-lock consistency, documentation links and browser import reachability. Normal fresh-launch and 2.35-to-2.36 manual-overlay checks preserve private environment, account IDs/passwords, messages, uploads and recovery state with schema 13. Internal QA/reproduction fixtures, installed dependencies and private storage are excluded.
+
+Every participating client should leave the call, reload to Nexus 2.36.0 and rejoin after the server restarts. Existing account, role, badge, device and listening settings are retained.
+
+## Previous release verification
+
 # Nexus 2.35 validation
 
 The 56 existing interface regression tests pass on Node 26.12.1. No new tests mirror CSS declarations. Application, server and launcher JavaScript are byte-identical to 2.34, as are schema 13, exact dependency pins, startup/viewport controllers, license material and personal community setup.

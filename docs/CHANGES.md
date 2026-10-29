@@ -1,3 +1,33 @@
+# Nexus 2.38 · preserve WebRTC receive playout above 100%
+
+The 2.37 reduction/reset correction left a separate amplification defect: switching the only raw-stream player to a generated stream could leave a receiver whose Web Audio samples depend on native playout without that driver. Local oscillator-only gain checks do not cover this dependency. A regression receiver model reproduces silence at 101% with the previous controller.
+
+Gain entries now retain a private muted/default-muted, zero-volume input player for the original received stream. Processed output is selected only after the input is playing and the context is running; the existing speaker routing and all silence gates remain authoritative. The input never becomes an additional audible output. Reset, replacement, leave and account changes clean it up without stopping the received track; late input/context results cannot resurrect an old graph.
+
+Unavailable amplification, a refused input start or rejected processed output keeps native speech at 100% instead of turning that person silent. The saved boost is retained and can be retried on a user gesture. Failed starts explain the fallback once. Fixed-volume reductions still require their exact quieter gain path and do not fall back to unexpectedly loud audio. All 2.37 single-card screen/camera and slider/reset changes remain included.
+
+See [validation](VALIDATION.md). Replace the complete update, restart Nexus, and have all participants reload to 2.38.0 before rejoining. The archive preserves account/database state and does not reset local mute preferences.
+
+# Nexus 2.37 · immediate participant-volume recovery and unified call cards
+
+Lowering a participant's volume previously switched to a processed stream even when native reduction was available. Reset changed the preference but retained that graph, so an interrupted context could keep the person muted. It could also leave a dragged slider and percentage unchanged because cached HTML does not reset a dirty range property.
+
+Native reductions now retain the received stream and existing player. Fixed-volume devices retain the gain fallback, and amplification remains available. Reset returns to the original stream at 100% immediately, removes only that person's generated graph, clears their local mute, and explicitly synchronizes the live slider/output/accessibility value. Closed processing contexts are replaced when needed. Deafen, moderation, blocks, selected output, other participants and saved account/device choices remain authoritative.
+
+Each participant now has one stable card. A screen share uses that card's main video instead of creating a second participant tile; a simultaneously enabled camera appears inside the same card. Focus/grid and camera/share transitions retain the existing participant/main video. Inset sizing reserves label/action space at short landscape dimensions. Leaving releases both video elements without stopping call-owned media tracks.
+
+See [validation](VALIDATION.md). Replace the complete update, restart Nexus and have each participant reload to 2.37.0 before rejoining. Saved reductions work through the new path; an intentionally saved local mute still requires Unmute for me or Reset.
+
+# Nexus 2.36 · voice membership timing repair
+
+A delayed workspace response could overwrite newer live room membership or mute/deafen flags. The audio renderer then correctly silenced the missing/stale participant, but another member joining supplied a fresh room event and appeared to repair their microphone. The production-handler reproduction loses the main participant after an old bootstrap and restores it only after a third arrival.
+
+Workspace requests now retain room updates received while they were loading, including empty-room tombstones. They preserve newer participant/audio state, accept unaffected room snapshots, filter against current access and discard previous-account or superseded responses. Successful workspace completion reconciles existing call media immediately. Pending guards are released on success, failure and account reset.
+
+The server also includes a full authorized participant list in initial and repeated join acknowledgements, with current speak/stage restrictions. The client applies it before making initial peer offers. Blocks, mute/deafen, stage permissions, saved device/volume settings and creator identity remain unchanged; there is no username-specific audio bypass or account/database reset.
+
+See [validation](VALIDATION.md). After replacing the complete update and restarting the service, all participating clients must leave, reload to 2.36.0 and rejoin. Real-network microphone delivery still needs the intended device/network deployment; local synthetic rendering is not remote RTP evidence.
+
 # Nexus 2.35 · symmetrical confirmation actions
 
 Reload confirmation now uses two equal-width, equal-height controls on a shared desktop row. Narrow dialogs stack both controls at the same full width. Shared action dimensions, a consistent border box and bounded grid tracks remove the half-width cancel/full-width reload layout. Three-action draft confirmations keep their full-width Save row and equal secondary pair.

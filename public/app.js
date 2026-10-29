@@ -22,6 +22,7 @@ import { BrowserNotifications, conversationIsInFocus, messageWantsAlert } from '
 import { attachmentMenuMarkup, chooseAttachment, installComposerInteractions } from './composer-interactions.js';
 import { finishStartup } from './startup.js';
 import { validChannelHistory, lastServerChannel, readNavigation, saveNavigation } from './navigation.js';
+import { VoiceSnapshots } from './voice-state.js';
 import { ImageViewer } from './image-viewer.js';
 import { applyPalette } from './appearance.js';
 import { emojiPicker, emojiGrid, searchEmoji, EMOJI_CATEGORIES, searchGiphy, lookupGiphyStill } from './pickers.js';
@@ -29,7 +30,7 @@ import { icon, nexusLogo } from './icons.js';
 import { NexusCall } from './rtc.js';
 import { MediaPreferences, MEDIA_DEFAULTS, mediaError } from './media-devices.js';
 import { PARTICIPANT_AUDIO_CONFIG } from './participant-audio.js';
-import { deviceOptionsMarkup, mediaMenuMarkup, participantMenuMarkup, qualitySummary } from './media-ui.js';
+import { deviceOptionsMarkup, mediaMenuMarkup, participantMenuMarkup, syncParticipantAudioControls, qualitySummary } from './media-ui.js';
 import { NexusSounds } from './sounds.js';
 import * as UI from './ui.js';
 import * as CommunityUI from './community-ui.js';
@@ -118,6 +119,7 @@ const mediaPreferences = new MediaPreferences({
   onChange: snapshot => { state.mediaSettings = snapshot; refreshMediaControls(); },
 });
 state.mediaSettings = mediaPreferences.snapshot();
+const voiceSnapshots=new VoiceSnapshots();
 const call = new NexusCall({
   getSocket:()=>socket,getConfig:()=>state.config,
   getMediaSettings:()=>mediaPreferences.preferences,
@@ -127,6 +129,7 @@ const call = new NexusCall({
   },
   getCanSpeak:conversationId=>{const server=state.servers.find(server=>server.channels.some(channel=>channel.id===conversationId)),channel=server?.channels.find(channel=>channel.id===conversationId);return !server||UI.hasServerPermission(server,'speak')&&(channel.type!=='stage'||UI.hasServerPermission(server,'manageChannels'));},
   onAudioState:value=>{if(state.user)try{localStorage.setItem(`${CONFIG.audioStatePrefix}${state.user.id}`,JSON.stringify(value));}catch{/* Device choices can work without storage. */}},
+  onParticipants:payload=>receiveVoiceState(payload,false),
   getPeerAllowed:userId=>!state.blockedIds.includes(userId),onChange:()=>renderCall(),onIncoming:payload=>showIncomingCall(payload),onError:message=>toast(message,true)
 });
 const sounds = new NexusSounds({ getSettings: () => preferences, isQuiet: () => call.deafened || state.user?.preferredStatus === 'dnd' || state.user?.status === 'dnd', isFeedbackQuiet: () => state.user?.preferredStatus === 'dnd' || state.user?.status === 'dnd' });
@@ -281,8 +284,17 @@ function refreshWorkspace() {
   const task = workspaceQueue.catch(() => {}).then(async () => {
     const signature=()=>{const c=UI.activeConversation(state);return JSON.stringify([UI.currentServer(state)?.permissions,c&&[c.id,c.type,c.name,c.topic,c.readOnly,c.allowAttachments,c.allowMedia,c.cover,c.coverCrop,c.userLimit,c.slowmodeSeconds],UI.currentServer(state)?.moderation?.expiresAt]);};
     const before=signature();
-    const result = await request('/api/bootstrap');
-    Object.assign(state, result);
+    const accountId=state.user?.id,ticket=voiceSnapshots.begin(accountId);
+    let result;
+    try {
+      result=await request('/api/bootstrap');
+      // The first bootstrap supplies the signed-in account; later refreshes must retain it.
+      if(state.user?.id!==accountId||(accountId&&result.user?.id!==accountId)||!voiceSnapshots.current(ticket))return;
+      if(!result.user?.id)throw new Error('Your account could not be loaded. Sign in again.');
+      const allowed=new Set(result.servers.flatMap(server=>server.channels).concat(result.dms).map(conversation=>conversation.id));
+      result={...result,voice:voiceSnapshots.merge(ticket,result.voice,state.voice,allowed)};
+    } finally { voiceSnapshots.finish(ticket); }
+    Object.assign(state,result);
     const history = validChannelHistory(state.servers, state.lastChannels);
     const historyChanged = Object.keys(state.lastChannels).some(id => history[id] !== state.lastChannels[id]);
     state.lastChannels = history;
@@ -296,12 +308,13 @@ function refreshWorkspace() {
       renderMain();
     }
     if (historyChanged) rememberView();
-    renderChrome();
+    renderChrome();if(call.active||call.joining)renderCall();
   });
   workspaceQueue = task;
   return task;
 }
 async function loadWorkspace() {
+  voiceSnapshots.reset();
   ++securityRevision;state.accountSecurity=null;state.securityLoading=false;displayedRecoveryCodes=[];
   state.lastChannels = {};
   state.config = await request('/api/config');
@@ -415,17 +428,19 @@ async function connectRealtime() {
   socket.on('typing', ({ userId, conversationId }) => {
     if (!state.blockedIds.includes(userId) && userId !== state.user?.id && conversationId === state.activeConv) { typingUsers.set(userId, Date.now()); renderTyping(); }
   });
-  socket.on('voice:state', ({ conversationId, participants }) => {
-    if (call.active?.conversationId === conversationId) {
-      const previous = state.voice.filter(v => v.conversationId === conversationId && v.socketId !== socket.id);
-      const current = participants.filter(v => v.socketId !== socket.id);
-      if (current.some(v => !previous.some(old => old.socketId === v.socketId))) sounds.play('join');
-      else if (previous.some(v => !current.some(next => next.socketId === v.socketId))) sounds.play('leave');
-    }
-    state.voice = state.voice.filter(v => v.conversationId !== conversationId).concat(participants);
-    renderChrome(); renderCall();
-    if (incomingCall?.conversationId === conversationId && !participants.some(p => p.userId === incomingCall.user.id)) { if(modalType==='incoming')closeModal(true);else{sounds.stopRing();incomingCall=null;} }
-  });
+  socket.on('voice:state', payload=>receiveVoiceState(payload));
+}
+function receiveVoiceState({conversationId,participants},playSound=true) {
+  if(typeof conversationId!=='string'||!Array.isArray(participants))return;
+  voiceSnapshots.changed(conversationId);
+  if(playSound&&call.active?.conversationId===conversationId){
+    const previous=state.voice.filter(person=>person.conversationId===conversationId&&person.socketId!==socket.id),current=participants.filter(person=>person.socketId!==socket.id);
+    if(current.some(person=>!previous.some(old=>old.socketId===person.socketId)))sounds.play('join');
+    else if(previous.some(person=>!current.some(next=>next.socketId===person.socketId)))sounds.play('leave');
+  }
+  state.voice=state.voice.filter(person=>person.conversationId!==conversationId).concat(participants);
+  renderChrome();renderCall();
+  if(incomingCall?.conversationId===conversationId&&!participants.some(person=>person.userId===incomingCall.user.id)){if(modalType==='incoming')closeModal(true);else{sounds.stopRing();incomingCall=null;}}
 }
 function shouldSound(message) {
   return messageWantsAlert(message,{userId:state.user?.id,dms:state.dms,servers:state.servers});
@@ -1112,8 +1127,8 @@ document.addEventListener('click', async event => {
       case 'settings': case 'edit-profile': showSettings(); break;
       case 'media-settings': showSettings('media'); break;
       case 'participant-menu': showParticipantMenu(id,button); break;
-      case 'participant-mute': mediaView.audio.setMuted(id,!mediaView.audio.get(id).muted);mediaView.bind();refreshParticipantMenu();break;
-      case 'participant-reset': mediaView.audio.reset(id);mediaView.bind();refreshParticipantMenu();break;
+      case 'participant-mute': mediaView.audio.unlock();mediaView.audio.setMuted(id,!mediaView.audio.get(id).muted);mediaView.bind();refreshParticipantMenu();break;
+      case 'participant-reset': mediaView.audio.unlock();mediaView.audio.reset(id);mediaView.bind();refreshParticipantMenu();break;
       case 'media-menu': {
         if (!['microphone','speaker','camera','screen'].includes(button.dataset.kind)) break;
         popover(mediaMenuMarkup(button.dataset.kind, state.mediaSettings), button, 340);
@@ -1322,7 +1337,7 @@ document.addEventListener('input', event => {
   }
   if (input.dataset.participantVolume) {
     mediaView.audio.unlock();mediaView.audio.setVolume(input.dataset.participantVolume,input.value);mediaView.bind();
-    const value=mediaView.audio.get(input.dataset.participantVolume).volume;$('#participant-volume-value').textContent=`${value}%`;input.setAttribute('aria-valuetext',`${value} percent`);
+    syncParticipantAudioControls($('#popover-root'),mediaView.audio.get(input.dataset.participantVolume));
   }
   if (input.id === 'sound-volume') {
     preferences.soundVolume = Math.min(100, Math.max(0, Number(input.value) || 0));
@@ -1778,6 +1793,7 @@ function refreshParticipantMenu() {
   const menu=$('#popover-root [data-participant-menu]');if(!menu)return;
   const id=menu.dataset.participantMenu;
   syncMarkup($('#popover-root .popover'),participantMenuMarkup(userFor(id),mediaView.audio.get(id),participantOptions(id)));positionPopover();
+  syncParticipantAudioControls($('#popover-root'),mediaView.audio.get(id));
 }
 function openContextOptions(event) {
   if(!state.user||document.getSelection()?.isCollapsed===false)return false;

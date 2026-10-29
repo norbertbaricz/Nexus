@@ -13,6 +13,10 @@
   --tile-action-inset: 8px;
   --tile-speaking-bottom: 48px;
   --tile-label-height: 28px;
+  --tile-camera-width: clamp(56px, 26%, 180px);
+  --tile-camera-inset: 12px;
+  --tile-camera-height-limit: 135px;
+  --tile-camera-clearance: calc(var(--tile-action-inset) + var(--tile-action-size) + var(--tile-label-height) + 3 * var(--tile-camera-inset));
   color-scheme: dark;
   --bg: #111216;
   --sidebar: #181a20;
@@ -564,7 +568,7 @@ body.reduce-motion .server-card:hover { transform: none; }
 .role-checks { margin: 20px 0; padding: 10px 16px; border: 1px solid var(--border-strong); border-radius: 10px; }
 .role-checks legend { color: var(--muted); font-size: var(--text-label); padding: 0 6px; }
 
-/* The media stage fills the available space; screens and cameras have independent tiles. */
+/* One stable card per participant; a shared screen becomes that card's main video. */
 .voice-view { padding: 20px; justify-content: flex-start; align-items: stretch; overflow: hidden; }
 .voice-info { display: flex; align-items: center; gap: 16px; justify-content: space-between; flex-shrink: 0; margin-bottom: 16px; font-size: var(--text-sm); color: var(--muted); }
 .voice-info .button-secondary { min-height: 36px; padding: 6px 11px; font-size: var(--text-label); white-space: nowrap; }
@@ -1691,6 +1695,10 @@ textarea { scrollbar-gutter:auto; }
 .viewer-media-status { flex:0 0 auto;margin:0 0 12px;padding:12px 14px;border:1px solid #e16d6d77;border-radius:9px;background:#e16d6d0c;color:#ffb4b4;font-size:14px;line-height:1.5;overflow-wrap:anywhere; }
 
 .voice-tile .tile-name { min-height:var(--tile-label-height);line-height:20px; }
+.voice-tile .tile-camera { position:absolute;right:var(--tile-camera-inset);bottom:calc(var(--tile-label-height) + 2 * var(--tile-camera-inset));z-index:2;height:max(0px,min(26%,var(--tile-camera-height-limit),calc(100% - var(--tile-camera-clearance))));width:auto;max-width:var(--tile-camera-width);aspect-ratio:4/3;overflow:hidden;border:1px solid var(--border-strong);border-radius:10px;background:#0b0d11;visibility:hidden;pointer-events:none; }
+.voice-tile.has-camera-inset .tile-camera { visibility:visible; }
+.voice-tile.has-camera-inset .tile-camera video { opacity:1;object-fit:contain; }
+.media-thumbnails .voice-tile.has-camera-inset { min-height:160px;height:auto; }
 .voice-tile:has(.tile-state > .voice-state-icon:only-child) .tile-name { max-width:calc(100% - 68px); }
 .viewer-media-status { max-height:min(140px,calc(var(--viewport-height,100dvh) * .3));overflow:auto; }
 

@@ -1134,3 +1134,22 @@ test('deafen publishes both audio states and joining a muted peer does not chang
  assert.equal(members.find(p=>p.userId===owner.id).muted,false);assert.equal(members.find(p=>p.userId===guest.id).deafened,true);assert.equal(members.find(p=>p.userId===third.id).muted,true);
  for(const client of [a,b,c])await client.emit('voice:leave');
 });
+
+test('join acknowledgements provide the current full authorized roster before a third member and preserve stage restrictions',async()=>{
+ const owner=await register('voice_ack_owner236'),friend=await register('voice_ack_friend236'),third=await register('voice_ack_third236');
+ const sid=(await api('/api/servers',{cookie:owner.cookie,method:'POST',body:{name:'Join acknowledgement regression'}})).data.id;
+ const community=(await api('/api/bootstrap',{cookie:owner.cookie})).data.servers.find(server=>server.id===sid),roomId=community.channels.find(channel=>channel.type==='voice').id;
+ for(const person of [friend,third])assert.equal((await api('/api/servers/join',{cookie:person.cookie,method:'POST',body:{invite:community.invite}})).status,200);
+ assert.equal((await api('/api/blocks/'+third.id,{cookie:friend.cookie,method:'PUT',body:{}})).status,200);
+ const a=await connect(owner.cookie),b=await connect(friend.cookie),c=await connect(third.cookie);
+ try{
+  const first=await a.emit('voice:join',{conversationId:roomId});assert.equal(first.participants.length,1);assert.equal(first.participants[0].userId,owner.id);
+  const second=await b.emit('voice:join',{conversationId:roomId});assert.equal(second.participants.length,2);assert.ok(second.participants.some(person=>person.userId===owner.id&&!person.muted));assert.equal(second.canSpeak,true);
+  await a.emit('voice:update',{muted:true});const refreshed=await b.emit('voice:join',{conversationId:roomId});assert.equal(refreshed.participants.find(person=>person.userId===owner.id).muted,true);assert.equal(refreshed.canSpeak,true);assert.equal(refreshed.stageListener,false);
+  await a.emit('voice:update',{muted:false});await c.emit('voice:join',{conversationId:roomId,muted:true});const hidden=await b.emit('voice:join',{conversationId:roomId});assert.equal(hidden.participants.length,2);assert.ok(!hidden.participants.some(person=>person.userId===third.id));assert.equal(hidden.participants.find(person=>person.userId===owner.id).muted,false);
+  for(const client of [a,b,c])await client.emit('voice:leave');
+  const stage=(await api('/api/servers/'+sid+'/channels',{cookie:owner.cookie,method:'POST',body:{name:'stage-ack-regression',type:'stage'}})).data.id;
+  await a.emit('voice:join',{conversationId:stage});const listener=await b.emit('voice:join',{conversationId:stage});assert.equal(listener.canSpeak,false);assert.equal(listener.stageListener,true);assert.equal(listener.participants.find(person=>person.userId===friend.id).muted,true);
+  const repeated=await b.emit('voice:join',{conversationId:stage});assert.equal(repeated.canSpeak,false);assert.equal(repeated.stageListener,true);assert.equal((await b.emit('voice:update',{muted:false})).ok,false);
+ }finally{for(const client of [a,b,c])await client.emit('voice:leave');}
+});

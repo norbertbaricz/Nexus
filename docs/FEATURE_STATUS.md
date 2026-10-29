@@ -1,4 +1,4 @@
-# Request coverage · Nexus 2.35.0
+# Request coverage · Nexus 2.38.0
 
 | Area | Current behavior |
 | --- | --- |
@@ -14,10 +14,10 @@
 | Roles | Ordered roles; grants/denials; member grouping; separate role presentation in profiles |
 | Call navigation | Green sidebar card on desktop; reserved footer below the composer on phones; muted live screen/camera preview while still connected; stream cycling; return and disconnect |
 | Moderation | Kick/ban; timed/permanent restrictions; mute countdown; voice/stage disconnection; blocking |
-| Calls | Independent camera/screen tracks; offered-slot negotiation without speculative stop loops; stage restrictions; per-peer mute/deafen gates and icons; speaking overlays above video; one tile-action row; separate mobile media scrolling; incoming calls |
+| Calls | Live room state survives late workspace snapshots; initial join roster precedes peer offers; one stable card per participant with a shared-screen main view and camera inset; independent camera/screen tracks; offered-slot negotiation without speculative stop loops; stage restrictions; per-peer mute/deafen gates and icons; speaking overlays above video; one tile-action row; separate mobile media scrolling; incoming calls |
 | Devices | Automatic input permission requests through use; attached input/output/camera selectors; screen-quality menu; Voice & video settings; live camera orientation refresh; local account preferences |
 | Quality | 480p–4K; 15/24/30/60 FPS; automatic high-quality budgets and manual ceilings through 40 Mbps |
-| Listening audio | Per-person 0–200% gain; local mute/reset; account/device storage; member/message context actions |
+| Listening audio | Per-person 0–200% volume; native reductions; muted raw receive driver for amplification/fixed-volume gain; native 100% fallback on unavailable amplification; immediate local mute/reset and slider synchronization; account/device storage; member/message context actions |
 | Context menus | Server/channel/category/DM/member/message/forum/file/artwork actions; keyboard and touch; permissions and confirmations |
 | Mobile keyboard | Fixed dark canvas; bounded first hydration; layout/visual event-order clamps; root-pan repair; Send/attachment/picker focus retention; installed-site metadata |
 | Layout | Equal composer controls and text baselines; resizable panels; one-row local profile; balanced call controls; stable footer-anchored toasts; hidden scrollbar chrome on compact editors/tab rows; scrollable settings; themed menus; gestures |

@@ -435,6 +435,20 @@ test('mute and deafen are separate accessible overlays on camera and screen tile
  for(const kind of ['camera','screen']){const html=ui.voiceTileMarkup(state,{...state.voice[0],kind});assert.ok(html.includes('aria-label="Microphone muted"'));assert.ok(html.includes('aria-label="Deafened"'));}
  const sidebar=ui.renderSidebar(state,{});assert.ok(sidebar.includes('aria-label="Deafened"'));assert.equal(ui.voiceAudioStateMarkup({muted:false,deafened:false}),'');
 });
+test('sharing and simultaneous camera use one stable participant card in grid and focus layouts',async()=>{
+ const ui=await browserModule('ui.js'),state=fixture('voice');state.users.push({id:'u_two',displayName:'Two',username:'two'});
+ state.voice=[{userId:'u_one',socketId:'one',conversationId:'c_one',camera:true,sharing:false},{userId:'u_two',socketId:'two',conversationId:'c_one',camera:true,sharing:false}];
+ const first=ui.voiceTiles(state),key=ui.voiceTileKey(first[1]);assert.equal(first.length,2);state.voice[1].sharing=true;
+ for(const focus of [undefined,'grid',key]){state.mediaFocus=focus;const layout=ui.voiceLayout(state);assert.equal(layout.tiles.length,2);assert.equal(layout.tiles.filter(tile=>tile.socketId==='two').length,1);assert.equal(layout.tiles[1].kind,'screen');assert.equal(ui.voiceTileKey(layout.tiles[1]),key);assert.equal(layout.focusKey,focus==='grid'?null:key);}
+ state.voice[1].sharing=false;state.mediaFocus=key;assert.equal(ui.voiceLayout(state).focusKey,key);assert.equal(ui.voiceTiles(state)[1].kind,'camera');
+ state.activeConv='dm_one';state.dms=[{id:'dm_one',peerId:'u_two'}];state.voice.forEach(person=>person.conversationId='dm_one');state.voice[1].sharing=true;assert.equal(ui.voiceTiles(state).length,2);assert.equal(ui.voiceLayout(state).focusKey,key);
+});
+
+test('reset writes the live slider property and visible value even when HTML already has the default attribute',async()=>{
+ const {syncParticipantAudioControls}=await browserModule('media-ui.js'),input={max:'200',value:'35',attributes:{},setAttribute(key,value){this.attributes[key]=value;}},output={textContent:'35%'},root={querySelector:selector=>selector==='[data-participant-volume]'?input:output};
+ syncParticipantAudioControls(root,{volume:100,muted:false});assert.equal(input.value,'100');assert.equal(output.textContent,'100%');assert.equal(input.attributes['aria-valuetext'],'100 percent');
+ input.max='100';syncParticipantAudioControls(root,{volume:150});assert.equal(input.value,'100');assert.equal(output.textContent,'100%');syncParticipantAudioControls(null,{volume:100});
+});
 test('file video fitting preserves portrait/landscape ratios and detects audio-only unsupported video decode',async()=>{
  const {containedVideoSize,videoPlaybackIssue}=await browserModule('image-viewer.js');
  assert.deepEqual(containedVideoSize(1920,1080,320,300),{width:320,height:180});const portrait=containedVideoSize(360,640,320,480);assert.equal(portrait.height,480);assert.equal(portrait.width,270);

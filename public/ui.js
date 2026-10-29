@@ -222,14 +222,15 @@ export function discoverySearchMarkup(page) {
 }
 export function voiceTiles(s) {
   const participants = (s.voice || []).filter(participant => participant.conversationId === s.activeConv);
-  return participants.flatMap(participant => [{ ...participant, kind: 'camera' }, ...(participant.sharing ? [{ ...participant, kind: 'screen' }] : [])]);
+  return participants.map(participant => ({ ...participant, kind: participant.sharing ? 'screen' : 'camera' }));
 }
+export function voiceTileKey(tile) { return `${tile.socketId}:participant`; }
 export function voiceTileActionsMarkup(s, tile) {
-  const user=userFor(s,tile.userId),key=`${tile.socketId}:${tile.kind}`;
+  const user=userFor(s,tile.userId),key=voiceTileKey(tile);
   return `<button type="button" class="icon-button tile-media-action" data-action="focus-media" data-key="${escape(key)}" aria-label="Focus ${escape(user.displayName)} ${tile.kind}" title="Focus">${icon('screen',20)}</button><button type="button" class="icon-button tile-media-action" data-action="fullscreen-media" data-key="${escape(key)}" aria-label="Fullscreen ${escape(user.displayName)} ${tile.kind}" title="Fullscreen">${icon('expand',20)}</button>${user.id!==s.user.id?`<button type="button" class="icon-button participant-menu-button" data-action="participant-menu" data-id="${escape(user.id)}" aria-haspopup="dialog" aria-label="Options for ${escape(user.displayName)}" title="Member options">${icon('more',20)}</button>`:''}`;
 }
 export function voiceTileMarkup(s, tile, featured = false) {
-  const user=userFor(s,tile.userId),key=`${tile.socketId}:${tile.kind}`,hasVideo=tile.kind==='screen'?tile.sharing:tile.camera;
+  const user=userFor(s,tile.userId),key=voiceTileKey(tile),hasVideo=tile.kind==='screen'?tile.sharing:tile.camera;
   return `<div class="voice-tile ${featured?'featured':''} ${hasVideo?'expects-video':''}" data-media-key="${escape(key)}" data-peer="${escape(tile.socketId)}" data-user-id="${escape(user.id)}" data-kind="${tile.kind}" tabindex="0" aria-label="${escape(user.displayName)} ${tile.kind==='screen'?'screen share':'call tile'}"><span class="speaking-indicator" aria-label="Speaking" role="img" aria-hidden="true"><i></i><i></i><i></i></span><div class="tile-avatar">${avatar(user)}</div><span class="tile-name">${escape(user.displayName)}${tile.kind==='screen'?' · Screen':user.id===s.user.id?' (you)':''}</span><span class="tile-state">${voiceAudioStateMarkup(tile)}</span><div class="tile-actions" role="group" aria-label="Call tile actions for ${escape(user.displayName)}">${voiceTileActionsMarkup(s,tile)}</div></div>`;
 }
 export function voiceAudioStateMarkup(person,size=18) {
@@ -237,8 +238,8 @@ export function voiceAudioStateMarkup(person,size=18) {
 }
 export function voiceLayout(s) {
   const tiles = voiceTiles(s);
-  const focus = s.mediaFocus === 'grid' ? null : tiles.find(tile => `${tile.socketId}:${tile.kind}` === s.mediaFocus) || tiles.find(tile => tile.kind === 'screen');
-  return { tiles, focusKey: focus ? `${focus.socketId}:${focus.kind}` : null };
+  const focus = s.mediaFocus === 'grid' ? null : tiles.find(tile => voiceTileKey(tile) === s.mediaFocus) || tiles.find(tile => tile.kind === 'screen');
+  return { tiles, focusKey: focus ? voiceTileKey(focus) : null };
 }
 export function voiceStatus(s, call) {
   if (call.connectionIssue) return call.connectionIssue;
@@ -251,7 +252,7 @@ export function voiceStatus(s, call) {
 export function voiceMarkup(s, call) {
   const dm = Boolean(activeConversation(s)?.peerId);
   const layout = voiceLayout(s);
-  return `${chatHeader(s, conversationName(s), { dm, voice: true })}<div class="voice-view" data-conversation="${escape(s.activeConv)}"><div class="voice-info"><span id="voice-status" role="status">${escape(voiceStatus(s, call))}</span><button class="button-secondary" data-action="clear-media-focus">Grid view</button></div><div id="voice-grid" class="voice-grid ${layout.focusKey ? 'presentation-layout' : ''}">${layout.tiles.map(tile => voiceTileMarkup(s, tile, `${tile.socketId}:${tile.kind}` === layout.focusKey)).join('') || '<div class="voice-empty"><h2>No one is in this call yet</h2><p>Join to start talking.</p></div>'}</div><div class="voice-footer"><div id="voice-controls" class="voice-controls">${voiceControlMarkup(s, call)}</div><div id="voice-playback">${s.audioBlocked ? '<button class="button-primary" data-action="enable-call-audio">Enable call audio</button>' : ''}</div></div></div>`;
+  return `${chatHeader(s, conversationName(s), { dm, voice: true })}<div class="voice-view" data-conversation="${escape(s.activeConv)}"><div class="voice-info"><span id="voice-status" role="status">${escape(voiceStatus(s, call))}</span><button class="button-secondary" data-action="clear-media-focus">Grid view</button></div><div id="voice-grid" class="voice-grid ${layout.focusKey ? 'presentation-layout' : ''}">${layout.tiles.map(tile => voiceTileMarkup(s, tile, voiceTileKey(tile) === layout.focusKey)).join('') || '<div class="voice-empty"><h2>No one is in this call yet</h2><p>Join to start talking.</p></div>'}</div><div class="voice-footer"><div id="voice-controls" class="voice-controls">${voiceControlMarkup(s, call)}</div><div id="voice-playback">${s.audioBlocked ? '<button class="button-primary" data-action="enable-call-audio">Enable call audio</button>' : ''}</div></div></div>`;
 }
 export function voiceControlMarkup(s, call) {
   if(activeTimeout(currentServer(s)))return timeoutMarkup(currentServer(s));

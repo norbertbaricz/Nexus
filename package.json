@@ -1,6 +1,6 @@
 {
   "name": "nexus-chat",
-  "version": "2.35.0",
+  "version": "2.38.0",
   "description": "A community-first communication app with servers, channels, direct messages, and WebRTC voice.",
   "private": true,
   "main": "server.js",

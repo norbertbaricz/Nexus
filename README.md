@@ -23,7 +23,7 @@ Node 26.12.1 is supported. This release also repairs a previous Multer lock-entr
 2. Extract the ZIP and copy the **contents of its Nexus folder** over your existing installation, replacing the application files. Copy `package.json`, `package-lock.json` and `release.json` together with the complete `public/`, `server/` and `scripts/` folders.
 3. Keep your existing `.env`, `data/` and any externally configured storage. The ZIP does not contain or reset these private files. Retain your personal `setup/` files if you have customized them.
 4. Start that same installation with `start.bat` or `bash start.sh`, or restart its service. The launcher installs missing/mismatched dependencies when needed.
-5. Reload the website once. Settings → Account should show **Nexus 2.35.0**.
+5. Reload the website once. Settings → Account should show **Nexus 2.38.0**.
 
 No separate update command or installer is required. An overlay copy can leave retired files from earlier packages on disk. If present from an older release, you can remove `update.bat`, `update.sh`, `scripts/update.js` and `test/update.test.js` once; the current website does not load or require them. Use the current ZIP as the application-file inventory and preserve your private configuration/storage when removing older application files.
 
@@ -87,6 +87,16 @@ Existing accounts do not gain a verified email or recovery codes automatically. 
 Microphone/camera permission is requested through normal call and device-selection actions, without separate Allow buttons. Opening Settings alone does not start capture. Temporary device-name discovery releases its tracks; browser/OS consent still controls access and cannot be forced by a website. Per-person volume and local mute are saved for your account on this device and apply to every connection from that user. The selected speaker, deafen, blocks and server restrictions remain authoritative for playback.
 
 Device APIs control microphone, camera and output availability. Unsupported speaker routing is explained in the UI and uses system sound settings. General notification sounds retain their system output. Real-network calls need HTTPS and an appropriate TURN relay; see [voice deployment](docs/VOICE_DEPLOYMENT.md).
+
+## Participant volume and call cards
+
+Volume reductions use the existing received stream and player when the browser supports native element volume. Devices with fixed element volume use an independent gain path; amplification above 100% also uses that path. A private muted raw-stream player keeps the WebRTC receive path active while processed audio plays through the selected speaker. Amplification waits for this input to play; interrupted processing or a refused processed output falls back to native 100% playback with an explanation, while preserving the requested boost for a later user-action retry. Fixed-volume reductions stay silent until their exact lower volume can be applied. Reset restores 100%, clears only that person's local mute and returns playback to the original received stream immediately, including when a processing context is interrupted. The slider thumb, percentage and accessibility value update together. It does not override deafen, blocks, moderation or the selected output.
+
+Each participant has one stable call card. Screen sharing replaces its main camera/avatar view; a simultaneously enabled camera appears inside that same card. Grid, focus and fullscreen retain the participant card and existing main video element. Camera/screen capture and network tracks remain independent.
+
+## Voice state synchronization
+
+Live room updates are retained if an older workspace request completes later. The join acknowledgement supplies the current authorized participant list before initial peer offers, and completed workspace refreshes reconcile existing audio immediately. Empty rooms, mute/deafen, blocks and stage restrictions remain authoritative; account-specific volume/input choices are not reset. After updating the server, every participant should leave the call, reload Nexus to 2.38.0 and join again so old running clients do not retain the previous synchronization code. See [voice deployment and verification](docs/VOICE_DEPLOYMENT.md).
 
 ## Skypixel Framework recovery
 

@@ -47,7 +47,7 @@ async function fixture(t, overrides = {}) {
   const devices = { async getUserMedia(constraints) { return new Stream([...(constraints.audio ? [track('audio')] : []), ...(constraints.video ? [track('video')] : [])]); }, async getDisplayMedia() { return new Stream([track('video')]); }, ...overrides.devices };
   const call = new NexusCall({ getSocket: () => socket, getConfig: () => ({ iceServers: [], rtcConnectionTimeoutMs: TEST_CONNECTION_TIMEOUT_MS, rtcMaxRestarts: 1 }),
     getMediaSettings: () => overrides.preferences || {}, mediaDevices: devices, peerFactory: () => { const peer = new Peer(); peers.push(peer); return peer; }, streamFactory: () => new Stream(),
-    onChange() {}, onIncoming() {}, onError: message => errors.push(message), getCanSpeak: () => overrides.canSpeak !== false, getMediaAllowed: () => overrides.mediaAllowed !== false });
+    onChange() {}, onIncoming() {}, onParticipants:overrides.onParticipants, onError: message => errors.push(message), getCanSpeak: () => overrides.canSpeak !== false, getMediaAllowed: () => overrides.mediaAllowed !== false });
   call.bind(socket); t.after(() => call.leave(false));
   return { call, socket, devices, events, errors, peers, handlers };
 }
@@ -295,4 +295,9 @@ test('camera orientation refresh keeps microphone, camera and screen tracks and 
  const f=await fixture(t);await f.call.join('room',{video:true});await f.call.toggleScreen();const camera=f.call.currentCameraTrack(),microphone=f.call.localStream.getAudioTracks()[0],screen=f.call.currentScreenTrack();let captures=0;
  f.devices.getUserMedia=async()=>{captures++;throw new Error('Rotation must not recapture');};await f.call.refreshCameraOrientation();assert.equal(captures,0);assert.equal(f.call.currentCameraTrack(),camera);assert.equal(f.call.currentScreenTrack(),screen);assert.equal(microphone.readyState,'live');assert.equal(camera.constraints.width.max,camera.constraints.height.max);assert.equal(camera.constraints.resizeMode.ideal,'none');
  camera.applyConstraints=async()=>{throw Object.assign(new Error('Unsupported rotation constraint'),{name:'OverconstrainedError'});};await f.call.refreshCameraOrientation();assert.equal(camera.readyState,'live');assert.equal(f.call.video,true);
+});
+
+test('the authoritative join roster is applied before any initial media offers',async t=>{
+ let f;const snapshots=[];f=await fixture(t,{joinAck:ack=>ack(null,{ok:true,canSpeak:true,participants:[{socketId:'local',userId:'main',conversationId:'room',muted:false},{socketId:'remote',userId:'friend',conversationId:'room',muted:false}],peers:[{socketId:'remote'}]}),onParticipants:value=>{assert.equal(f.call.active.conversationId,'room');assert.equal(f.events.filter(event=>event.event==='rtc:signal').length,0);snapshots.push(value);}});
+ await f.call.join('room');assert.equal(snapshots.length,1);assert.equal(snapshots[0].participants.length,2);assert.equal(f.call.peers.get('remote').audioTransceiver.sender.track,f.call.localStream.getAudioTracks()[0]);assert.equal(f.call.localStream.getAudioTracks()[0].enabled,true);
 });

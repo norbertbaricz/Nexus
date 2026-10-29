@@ -10,8 +10,8 @@ const stopStream = stream => stream?.getTracks().forEach(track => { track.onende
 
 export class NexusCall {
   constructor({ getSocket, getConfig, onChange, onIncoming, onError, mediaDevices = globalThis.navigator?.mediaDevices,
-    peerFactory = config => new RTCPeerConnection(config), streamFactory = () => new MediaStream(), getMediaAllowed = () => true, getCanSpeak = () => true, getPeerAllowed = () => true, onAudioState = () => {}, getMediaSettings = () => ({}) }) {
-    Object.assign(this, { getSocket, getConfig, onChange, onIncoming, onError, mediaDevices, peerFactory, streamFactory, getMediaAllowed, getCanSpeak, getPeerAllowed, onAudioState, getMediaSettings });
+    peerFactory = config => new RTCPeerConnection(config), streamFactory = () => new MediaStream(), getMediaAllowed = () => true, getCanSpeak = () => true, getPeerAllowed = () => true, onAudioState = () => {}, getMediaSettings = () => ({}), onParticipants = () => {} }) {
+    Object.assign(this, { getSocket, getConfig, onChange, onIncoming, onError, mediaDevices, peerFactory, streamFactory, getMediaAllowed, getCanSpeak, getPeerAllowed, onAudioState, getMediaSettings, onParticipants });
     this.active = null; this.peers = new Map(); this.pendingSignals = []; this.generation = 0;
     this.localStream = null; this.cameraStream = null; this.screenStream = null;
     this.preferredMuted = false; this.muted = false; this.deafened = false; this.video = false; this.sharing = false; this.joining = false;
@@ -79,7 +79,9 @@ export class NexusCall {
       if (generation !== this.generation) return;
       this.stageListener = !canSpeak || result.canSpeak === false || Boolean(result.stageListener);
       this.applyAudioState();
-      this.active = { conversationId, startedAt: Date.now() }; this.onChange();
+      this.active = { conversationId, startedAt: Date.now() };
+      if(Array.isArray(result.participants))this.onParticipants({conversationId,participants:result.participants});
+      this.onChange();
       const pending = this.pendingSignals.splice(0);
       for (const signal of pending) await this.signal(signal);
       for (const peer of result.peers) await this.createPeer(peer.socketId, true);

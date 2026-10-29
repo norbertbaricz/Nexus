@@ -1019,7 +1019,7 @@ function createApp(config, { mailTransport, pushTransport, pushClock, pushAutoSt
         if(conversation.serverId)permission(conversation.serverId,socket.userId,'connectVoice');
         if (!isVoice(conversation) && conversation.type !== 'dm') throw new HttpError(400, 'Choose a voice room or direct message.');
         const current = voice.get(socket.id);
-        if (current?.conversationId === payload.conversationId) return { peers: voiceState(payload.conversationId,socket.userId).participants.filter(p => p.socketId !== socket.id) };
+        if (current?.conversationId === payload.conversationId) {const participants=voiceState(payload.conversationId,socket.userId).participants;return {peers:participants.filter(person=>person.socketId!==socket.id),participants,canSpeak:current.canSpeak,stageListener:!current.stageSpeaker};}
         const peers = voiceState(payload.conversationId,socket.userId).participants;
         if (voiceState(payload.conversationId).participants.length >= (conversation.userLimit || config.maxVoiceParticipants)) throw new HttpError(409, 'This voice room is full.');
         if ([...voice.values()].some(v => v.userId === socket.userId)) throw new HttpError(409, 'You are already connected in another tab.');
@@ -1027,7 +1027,7 @@ function createApp(config, { mailTransport, pushTransport, pushClock, pushAutoSt
         const stageSpeaker=conversation.type!=='stage'||hasPermission(conversation.serverId,socket.userId,'manageChannels'),canSpeak=!conversation.serverId||stageSpeaker&&hasPermission(conversation.serverId,socket.userId,'speak');
         voice.set(socket.id, { canSpeak,stageSpeaker: conversation.type !== 'stage' || hasPermission(conversation.serverId, socket.userId, 'manageChannels'), socketId: socket.id, userId: socket.userId, conversationId: payload.conversationId, muted: !canSpeak || payload.muted === true || payload.deafened === true, deafened: payload.deafened === true, camera: false, sharing: false });
         socket.join(`voice:${payload.conversationId}`); publishVoice(payload.conversationId);
-        return { peers, canSpeak,stageListener: conversation.type === 'stage' && !stageSpeaker };
+        return { peers, participants:voiceState(payload.conversationId,socket.userId).participants, canSpeak,stageListener: conversation.type === 'stage' && !stageSpeaker };
       });
       on('voice:leave', () => { leaveVoice(socket); });
       on('voice:update', payload => {

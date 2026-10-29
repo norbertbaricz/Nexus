@@ -45,3 +45,14 @@ export function participantMenuMarkup(user, audio, { canAdjust = false, canModer
   const id = escape(user.id), name = escape(user.displayName), volume = Number(audio.volume);
   return `<section class="participant-menu" data-participant-menu="${id}" role="dialog" aria-label="Options for ${name}"><div class="picker-heading"><strong>${name}</strong><button class="icon-button" data-action="close-picker" aria-label="Close member options">${icon('close',18)}</button></div>${canAdjust ? `<div class="participant-audio-controls"><label for="participant-volume">User volume <output id="participant-volume-value" for="participant-volume">${volume}%</output></label><input id="participant-volume" type="range" min="${PARTICIPANT_AUDIO_CONFIG.minimum}" max="${maximum}" step="${PARTICIPANT_AUDIO_CONFIG.step}" value="${Math.min(maximum,volume)}" data-participant-volume="${id}" aria-label="Volume for ${name}" aria-valuetext="${volume} percent"><p>Only you hear this change.</p><div class="participant-audio-actions"><button type="button" class="button-secondary" data-action="participant-mute" data-id="${id}" aria-pressed="${audio.muted}">${icon(audio.muted?'voice':'micOff',18)}${audio.muted?'Unmute for me':'Mute for me'}</button><button type="button" class="button-secondary" data-action="participant-reset" data-id="${id}">Reset</button></div></div><div class="popover-divider"></div>` : ''}<button class="popover-item" data-action="profile" data-id="${id}">${icon('user',20)}<span>View profile</span></button><button class="popover-item" data-action="copy-user-username" data-id="${id}">${icon('copy',20)}<span>Copy username</span></button>${self?`<button class="popover-item" data-action="settings">${icon('settings',20)}<span>Your settings</span></button>`:''}${!self ? `<button class="popover-item" data-action="open-dm" data-id="${id}">${icon('chat',20)}<span>Message</span></button><button class="popover-item" data-action="context-call-user" data-id="${id}">${icon('phone',20)}<span>Start voice call</span></button>${canModerate?`<button class="popover-item" data-action="moderate-member" data-id="${id}">${icon('shield',20)}<span>Moderate member</span></button>`:''}<div class="popover-divider"></div><button class="popover-item danger" data-action="block-user" data-id="${id}">${icon('ban',20)}<span>Block user</span></button>` : ''}</section>`;
 }
+
+// A dragged range has a dirty live value; updating its HTML attribute cannot reset it.
+export function syncParticipantAudioControls(root, audio) {
+  const input = root?.querySelector('[data-participant-volume]');
+  if (!input) return;
+  const volume = Math.min(Number(input.max), audio.volume);
+  input.value = String(volume);
+  input.setAttribute('aria-valuetext', `${volume} percent`);
+  const output = root.querySelector('#participant-volume-value');
+  if (output) output.textContent = `${volume}%`;
+}

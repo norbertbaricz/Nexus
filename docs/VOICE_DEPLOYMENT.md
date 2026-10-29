@@ -20,9 +20,13 @@ Output, capture and sender API support is detected at runtime. Physical micropho
 
 Right-click a participant's tile, avatar or member row, use Shift+F10 on it, or use the tile's member-options button. Touch devices also support the options button and a long press. When you share an active call, the menu exposes 0–200% volume, Mute for me and Reset. The same user keeps their setting after reconnection, even if their socket ID changes. Changes affect only your listening audio and stay local to your account/device.
 
-Non-default levels use an independent Web Audio gain and generated MediaStream for each peer. The generated stream still plays through the existing HTML audio element and selected speaker; no gain node connects directly to physical output. Deafen, blocks, stage/server restrictions and unavailable output routes silence that element immediately. Disconnecting removes generated graphs/tracks without stopping the original received tracks. Browsers without Web Audio expose reductions through their native volume control, up to 100%.
+Reductions retain the original received stream and use the existing HTML audio element when its volume is writable. Fixed-volume devices and amplification use an independent Web Audio gain and generated MediaStream for each peer. A generated stream still plays through the existing HTML audio element and selected speaker; no gain node connects directly to physical output. Deafen, blocks, stage/server restrictions and unavailable output routes silence that element immediately. Disconnecting removes generated graphs/tracks without stopping the original received tracks. Reset clears only the selected person's local mute, restores the live slider to 100% and removes that person's processing graph so playback immediately returns to the received stream. It remains subject to every external silence gate. Browsers without Web Audio expose reductions through their native volume control, up to 100%.
 
-A suspended audio context requires the existing Enable call audio action. Amplification can make a quiet signal louder, but cannot repair clipped or distorted microphone input.
+A private detached HTML audio input retains the raw received stream while a gain graph is active. It is always muted, default-muted and zero-volume; it never becomes a second speaker. This preserves native WebRTC playout while the existing routed output plays the processed stream. The input must start before handover. Reset, track replacement, leave and account changes pause and detach it without stopping the borrowed remote track.
+
+An interrupted or unavailable amplification graph, a failed input start or a rejected processed-output play falls back to native 100% playback, preserving mute/deafen/block/moderation/output gates. A failed start reports the fallback once. The requested 101–200% preference remains saved; a new volume/menu/Enable call audio gesture can retry it. Fixed-volume reductions cannot safely fall back to a louder level and remain gated until their exact setting is available.
+
+The existing Enable call audio action resumes blocked playback when needed. Amplification can make a quiet signal louder, but cannot repair clipped or distorted microphone input.
 
 ## Required hosting configuration
 
@@ -39,7 +43,7 @@ Leaving the TURN settings empty retains STUN-only development behavior. STUN can
 
 A local-only Web Audio analyser measures input energy from your live microphone and received peer audio. Speaking tiles use a green outline and animated bars. Mute, deafening, stage permissions, blocks and leaving stop the corresponding indicators. This does not send audio samples or speaking telemetry to the server. Enable call audio if the browser suspends playback/analysis. A local speaking indicator proves local input energy; it does not prove another device received the stream.
 
-Speaking bars, the green outline, names and separate mute/deafen icons occupy explicit layers above camera/screen pixels. Camera and screenshare tiles share their participant's audio state; sidebar occupants display it too.
+Speaking bars, the green outline, names and separate mute/deafen icons occupy explicit layers above camera/screen pixels. The main screen/camera view and camera inset share one participant card and audio state; sidebar occupants display it too.
 
 ## Uploaded video files
 
@@ -49,7 +53,7 @@ The viewer contains the picture and retains playback controls in short landscape
 
 ## Device checks
 
-Use two physical devices connected to different networks for the deployment check. Confirm audio in both directions, then camera video in both directions. Start screen sharing while the camera remains on; the shared screen should become the main presentation and the camera should remain in the thumbnail rail. Expand the shared screen to inspect text at a larger size.
+Use two physical devices connected to different networks for the deployment check. Confirm audio in both directions, then camera video in both directions. Start screen sharing while the camera remains on; the shared screen should become the main presentation and the camera should remain as an inset in that same participant card. Expand the shared screen to inspect text at a larger size.
 
 If the browser blocks audio autoplay, use **Enable call audio** after joining. Confirm the tab is not muted and that the intended output device is selected. Microphone and camera permission are controlled by the browser and operating system.
 
@@ -63,6 +67,14 @@ Screen capture availability varies by browser and operating system. Unsupported 
 - A network change can trigger bounded ICE recovery. If signaling is lost, the previous call reconnects with fresh microphone/camera tracks after the connection returns. Browser screen capture must be started again with a user gesture.
 
 The current architecture is an eight-participant mesh. Larger voice rooms need an SFU and dedicated media infrastructure.
+
+## Voice roster timing and account state
+
+The room list is part of the audio authorization gates. A late HTTP bootstrap must not replace a newer voice event with an absent participant or an old muted flag. In 2.36, request-scoped room guards merge current live changes, preserve empty-room removals and release their memory when the request settles. Current workspace access still filters the result. Join acknowledgements carry the full authorized roster, including the local participant and current stage/speak restrictions, before initial media offers are created. Repeated joins retain the same policy metadata.
+
+This is independent of a display name, username or creator badge. Saved microphone selection, local mute/deafen and per-person volume are preserved. It does not bypass permissions or force an intentionally muted account audible. Restart the updated server, then have every participant leave and reload Nexus to 2.38.0 before rejoining; old in-memory clients retain old response handlers until reloaded.
+
+The native renderer check uses synthetic local tones and a real HTML audio element. It verifies that playback remains unmuted and advancing through a stale snapshot before any third arrival. The separate peer check reaches stable sendrecv negotiation but gathers zero ICE candidates in this QA environment, so it does not certify remote audio reception. See [current validation](VALIDATION.md).
 
 ## Verification boundary for this archive
 
@@ -100,3 +112,7 @@ While browsing away from an active call, a compact green card sits above the loc
 An active published screenshare or camera can appear as one muted live preview. Screen sharing has initial priority; the next-preview button cycles available streams. Navigation, member/presence updates and sidebar resizing retain the existing preview player. Stopping publication or ending the track removes it immediately, falling back to another available source. No media source means only return/disconnect controls remain.
 
 The preview reuses tracks already received by the connected call. It never captures a device, creates a second audio path, joins another room or grants permission to view a disconnected/private room. Leaving the call clears the preview without stopping tracks owned by a different component. Safari/Android playback and real remote-media quality still require physical-device and deployment checks.
+
+## Single participant cards
+
+A screen share becomes the main view in the existing participant card instead of adding another card for that person. When their camera remains on, a bounded camera inset appears inside the same card. The card key and primary video element remain stable through camera/screen transitions and focus/grid changes. Stopping a share restores the camera/avatar view; it does not stop another call-owned track. The inset respects control/label space in short landscape windows.
